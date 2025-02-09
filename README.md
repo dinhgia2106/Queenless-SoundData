@@ -116,3 +116,14 @@
 - **MFCCs**, **STFT**, **FFT**, **CQT**, **SC**, và **Chroma** là các phương pháp phân tích tín hiệu âm thanh cực kỳ mạnh mẽ, giúp trích xuất đặc trưng âm thanh từ tín hiệu trong việc xác định sự có mặt của ong chúa trong tổ ong.
 - Các phương pháp này giúp phân tích và trích xuất thông tin về tần số, cao độ, sự tương phản âm sắc, và các đặc trưng âm thanh khác từ tiếng rít của ong chúa, giúp hệ thống nhận diện được âm thanh đặc trưng của ong chúa so với các âm thanh khác trong môi trường tổ ong.
 - Việc sử dụng các phương pháp này giúp phân biệt rõ ràng tiếng rít của ong chúa, một đặc trưng âm thanh quan trọng trong dự án phân loại âm thanh này.
+
+### **Ứng dụng trong bài toán xác định ong chúa**
+
+- Các phương pháp trên được sử dụng để trích xuất đặc trưng từ tín hiệu âm thanh của tổ ong. Sau khi trích xuất đặc trưng, các thuật toán học máy (machine learning) như **K-Nearest Neighbors (KNN)**, **Support Vector Machine (SVM)**, **Random Forest (RF)**, **Extra Trees (ET)**, và **Logistic Regression (LR)** được áp dụng để phân loại trạng thái của tổ ong, xác định xem có sự hiện diện của ong chúa hay không.
+
+### **Quy trình tổng quát**:
+
+1. **Thu thập tín hiệu âm thanh**: Ghi lại âm thanh trong tổ ong (có thể là tiếng rít của ong chúa).
+2. **Trích xuất đặc trưng**: Sử dụng các phương pháp như **MFCCs**, **STFT**, **FFT**, **CQT**, **SC**, và **Chroma** để trích xuất các đặc trưng quan trọng từ tín hiệu.
+3. **Huấn luyện mô hình**: Cung cấp các đặc trưng đã trích xuất cho các thuật toán học máy để huấn luyện mô hình phân loại.
+4. **Kiểm tra mô hình**: Áp dụng mô hình đã huấn luyện vào các dữ liệu mới để xác định sự có mặt của ong chúa dựa trên âm thanh.
