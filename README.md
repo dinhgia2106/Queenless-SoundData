@@ -127,3 +127,130 @@
 2. **Trích xuất đặc trưng**: Sử dụng các phương pháp như **MFCCs**, **STFT**, **FFT**, **CQT**, **SC**, và **Chroma** để trích xuất các đặc trưng quan trọng từ tín hiệu.
 3. **Huấn luyện mô hình**: Cung cấp các đặc trưng đã trích xuất cho các thuật toán học máy để huấn luyện mô hình phân loại.
 4. **Kiểm tra mô hình**: Áp dụng mô hình đã huấn luyện vào các dữ liệu mới để xác định sự có mặt của ong chúa dựa trên âm thanh.
+
+# II. Các Phương Pháp Học Máy (Machine Learning)
+
+Các thuật toán học máy được sử dụng nhằm phân loại các đặc trưng âm thanh được trích xuất (MFCCs, STFT, FFT, CQT, SC, Chroma) từ tiếng rít của ong chúa. Dưới đây là mô tả chi tiết cho từng phương pháp:
+
+---
+
+## 1. **K-Nearest Neighbors (KNN)**
+
+### Mục đích và cách hoạt động:
+
+- **KNN** là một thuật toán dựa trên khoảng cách trong không gian đặc trưng. Giả định rằng các mẫu có đặc trưng tương tự sẽ nằm gần nhau, nên nhãn của mẫu mới được quyết định dựa trên nhãn của các mẫu gần nhất.
+- Trong dự án, sau khi trích xuất các đặc trưng âm thanh, KNN sẽ so sánh khoảng cách giữa vector đặc trưng của mẫu chưa biết với các mẫu đã có nhãn trong tập huấn luyện. Nhãn của mẫu mới được xác định theo đa số nhãn của \( k \) láng giềng gần nhất.
+
+### Ưu điểm:
+
+- Dễ triển khai và trực quan.
+- Không cần giai đoạn huấn luyện phức tạp (trường hợp chỉ có tính toán khoảng cách).
+
+### Nhược điểm:
+
+- Hiệu năng giảm đáng kể với dữ liệu có số lượng mẫu lớn vì tính toán khoảng cách cho tất cả các cặp mẫu.
+- Kết quả phụ thuộc mạnh vào lựa chọn số lượng láng giềng \( k \) và cách xác định khoảng cách.
+
+---
+
+## 2. **Support Vector Machine (SVM)**
+
+### Mục đích và cách hoạt động:
+
+- **SVM** tìm kiếm một siêu phẳng tối ưu phân chia các lớp trong không gian đặc trưng. Với các trường hợp không tuyến tính, SVM sử dụng “kernel trick” (ví dụ: kernel RBF) để chuyển đổi dữ liệu vào không gian đặc trưng cao hơn.
+- Trong dự án, SVM được tối ưu hóa qua GridSearchCV với các tham số như `{'C': 10, 'gamma': 1, 'kernel': 'rbf'}` nhằm phân biệt chính xác các đặc trưng âm thanh liên quan đến tiếng rít của ong chúa.
+
+### Ưu điểm:
+
+- Hiệu quả trong không gian đặc trưng cao và với dữ liệu có sự phân tách không tuyến tính.
+- Có khả năng tổng quát hóa tốt nếu được tối ưu tham số đúng cách.
+
+### Nhược điểm:
+
+- Huấn luyện SVM với kernel RBF có thể tốn thời gian, đặc biệt với tập dữ liệu lớn.
+- Yêu cầu phải tối ưu hóa các tham số siêu để đạt hiệu suất tốt nhất.
+
+---
+
+## 3. **Logistic Regression (LR)**
+
+### Mục đích và cách hoạt động:
+
+- **Logistic Regression** là mô hình tuyến tính dùng cho bài toán phân loại nhị phân. Mô hình ước lượng xác suất thuộc về mỗi lớp qua hàm logistic (sigmoid) và gán nhãn cho mẫu dựa trên ngưỡng 0.5.
+- Trong dự án, LR được áp dụng cho các đặc trưng đã chuẩn hóa để xác định sự có mặt của ong chúa, là một lựa chọn đơn giản nhưng hiệu quả trong nhiều trường hợp phân loại nhị phân.
+
+### Ưu điểm:
+
+- Dễ hiểu, triển khai nhanh và cho kết quả huấn luyện nhanh.
+- Hiệu quả trong các bài toán phân loại tuyến tính.
+
+### Nhược điểm:
+
+- Có khả năng xử lý kém các mối quan hệ phi tuyến tính nếu dữ liệu không thể tuyến tính hóa được.
+- Có thể bị giới hạn khi dữ liệu có nhiễu cao hoặc số lượng đặc trưng lớn.
+
+---
+
+## 4. **Random Forest (RF)**
+
+### Mục đích và cách hoạt động:
+
+- **Random Forest** là một thuật toán ensemble kết hợp nhiều cây quyết định (decision trees) để cải thiện độ chính xác và giảm overfitting.
+- Trong dự án, RF được huấn luyện trên các đặc trưng âm thanh (có thể là dữ liệu gốc không cần chuẩn hóa) và mỗi cây được huấn luyện trên một tập con ngẫu nhiên của dữ liệu, sau đó kết hợp kết quả thông qua voting.
+
+### Ưu điểm:
+
+- Khả năng xử lý tốt với dữ liệu nhiễu và không bị overfitting khi số lượng cây đủ lớn.
+- Mô hình có thể xử lý cả dữ liệu tuyến tính lẫn phi tuyến tính.
+
+### Nhược điểm:
+
+- Mô hình có thể trở nên phức tạp và khó giải thích.
+- Tiêu thụ tài nguyên tính toán cao khi số lượng cây tăng.
+
+---
+
+## 5. **Extra Trees (ET)**
+
+### Mục đích và cách hoạt động:
+
+- **Extra Trees** (Extremely Randomized Trees) cũng là một thuật toán ensemble tương tự Random Forest nhưng có thêm yếu tố ngẫu nhiên trong việc chọn điểm cắt của cây, giúp giảm phương sai.
+- Trong dự án, ET được sử dụng trên dữ liệu đã chuẩn hóa để phân loại các đặc trưng âm thanh. Nhờ tính chất ngẫu nhiên cao, ET thường cho kết quả ổn định và nhanh hơn trong huấn luyện.
+
+### Ưu điểm:
+
+- Tốc độ huấn luyện nhanh và hiệu quả giảm overfitting.
+- Thường cho kết quả tốt trong nhiều bài toán phân loại.
+
+### Nhược điểm:
+
+- Do tính ngẫu nhiên cao, mô hình có thể cho kết quả không ổn định nếu không được hiệu chỉnh tham số cẩn thận.
+- Đôi khi khó giải thích kết quả do sự phức tạp của tập hợp các cây.
+
+---
+
+## Tóm tắt Quy Trình Huấn Luyện và Đánh Giá ML
+
+1. **Tiền xử lý dữ liệu**: Sau khi trích xuất các đặc trưng âm thanh (MFCCs, STFT, FFT, CQT, SC, Chroma), dữ liệu được chuyển đổi (ví dụ: từ chuỗi sang số qua LabelEncoder) và chuẩn hóa (sử dụng StandardScaler) nếu cần.
+2. **Huấn luyện mô hình**: Các thuật toán ML (KNN, SVM, LR, RF, ET) được huấn luyện trên tập dữ liệu đặc trưng.
+   - Ví dụ, SVM được tối ưu qua GridSearchCV với tham số `{'C': 10, 'gamma': 1, 'kernel': 'rbf'}`.
+3. **Tối ưu hóa**: Các siêu tham số của mô hình được điều chỉnh (thông qua GridSearchCV hoặc RandomizedSearchCV) để đạt được hiệu suất tốt nhất.
+4. **Đánh giá mô hình**: Các mô hình được đánh giá trên tập validation và test. Các chỉ số như accuracy được sử dụng để so sánh hiệu quả của từng mô hình.
+5. **Lựa chọn mô hình tối ưu**: Dựa vào các chỉ số đánh giá, mô hình tốt nhất sẽ được lựa chọn để triển khai trong hệ thống nhận diện tiếng rít của ong chúa.
+
+---
+
+Bằng việc kết hợp các phương pháp trích xuất đặc trưng mạnh mẽ với các thuật toán học máy đã nêu, dự án không chỉ nhận diện được tiếng rít của ong chúa trong tổ ong mà còn có thể phân biệt một cách chính xác giữa các loại âm thanh trong môi trường tổ ong. Các phương pháp ML cung cấp các giải pháp đa dạng, từ các thuật toán đơn giản như KNN và LR cho đến các mô hình phức tạp và hiệu quả như SVM, RF và ET, giúp tối ưu hóa hiệu suất nhận diện trong từng trường hợp cụ thể.
+
+---
+
+## Kết quả
+
+| Method | KNN    | SVM    | LR     | RF     | ET     |
+| ------ | ------ | ------ | ------ | ------ | ------ |
+| FFT    | 94.25% | 97.82% | 85.97% | 94.67% | 93.95% |
+| STFT   | 94.50% | 56.62% | 89.50% | 94.65% | 94.10% |
+| MFCC   | 92.75% | 94.00% | 73.28% | 92.00% | 92.53% |
+| CQT    | 95.83% | 80.17% | 83.60% | 94.55% | 95.08% |
+| CHROMA | 73.22% | 76.17% | 63.12% | 76.42% | 75.42% |
+| SC     | 65.70% | 57.00% | 53.47% | 67.33% | 67.27% |
