@@ -1,0 +1,1142 @@
+
+========================================
+Cell 1 - Loại: CODE
+========================================
+
+>>> Nội dung:
+import os
+import librosa
+import numpy as np
+import time
+import joblib
+from sklearn.metrics import accuracy_score
+import librosa.display
+import scipy.fftpack as fftpack
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
+from sklearn.model_selection import GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import MinMaxScaler
+import matplotlib.pyplot as plt
+
+
+
+========================================
+Cell 2 - Loại: CODE
+========================================
+
+>>> Nội dung:
+train_path = 'E:/Queenless/archive/nuhive_processed/train'
+val_path = 'E:/Queenless/archive/nuhive_processed/val'
+test_path = 'E:/Queenless/archive/nuhive_processed/test'
+
+output_dir = 'E:/Queenless/fft_features'
+os.makedirs(output_dir, exist_ok=True)
+
+
+
+========================================
+Cell 3 - Loại: CODE
+========================================
+
+>>> Nội dung:
+def pre_emphasis(signal_in, pre_emph=0.97):
+    """
+    Áp dụng pre-emphasis để nhấn mạnh các tần số cao.
+    
+    Args:
+        signal_in: Tín hiệu đầu vào
+        pre_emph: Hệ số pre-emphasis, mặc định là 0.97
+        
+    Returns:
+        Tín hiệu sau khi áp dụng pre-emphasis
+    """
+    return np.append(signal_in[0], signal_in[1:] - pre_emph * signal_in[:-1])
+
+def framing(signal_in, sample_rate, frame_size=0.025, hop_length=256, overlap=0.6):
+    """
+    Chia tín hiệu thành các frame với kích thước và bước nhảy xác định.
+    
+    Args:
+        signal_in: Tín hiệu đầu vào
+        sample_rate: Tần số lấy mẫu
+        frame_size: Kích thước frame (giây hoặc số mẫu nếu frame_size > 1)
+        hop_length: Bước nhảy (giây hoặc số mẫu nếu hop_length > 1)
+                    Nếu None, sẽ được tính dựa trên overlap
+        overlap: Tỷ lệ chồng lấp giữa các frame, mặc định là 0.6 (60%)
+                Chỉ được sử dụng khi hop_length là None
+        
+    Returns:
+        Mảng 2D chứa các frame
+    """
+    # Xác định kích thước frame trong số mẫu
+    if frame_size <= 1:  # Nếu frame_size <= 1, xem như đơn vị là giây
+        frame_length = int(round(frame_size * sample_rate))
+    else:  # Ngược lại, xem như đơn vị là số mẫu
+        frame_length = int(frame_size)
+    
+    # Xác định hop_length (bước nhảy) trong số mẫu
+    if hop_length is None:
+        # Tính hop_length từ overlap
+        frame_step = int(frame_length * (1 - overlap))
+    elif hop_length <= 1:  # Nếu hop_length <= 1, xem như đơn vị là giây
+        frame_step = int(round(hop_length * sample_rate))
+    else:  # Ngược lại, xem như đơn vị là số mẫu
+        frame_step = int(hop_length)
+    
+    # Đảm bảo hop_length không quá nhỏ
+    frame_step = max(1, frame_step)
+    
+    signal_length = len(signal_in)
+    
+    # Tính số frame cần thiết
+    num_frames = int(np.ceil((signal_length - frame_length) / frame_step)) + 1
+    
+    # Đệm tín hiệu để đảm bảo có đủ mẫu cho tất cả các frame
+    pad_signal_length = (num_frames - 1) * frame_step + frame_length
+    pad_zeros = np.zeros(pad_signal_length - signal_length)
+    padded_signal = np.concatenate([signal_in, pad_zeros])
+    
+    # Tạo indices cho từng frame
+    indices = np.tile(np.arange(0, frame_length), (num_frames, 1)) + \
+              np.tile(np.arange(0, num_frames * frame_step, frame_step), (frame_length, 1)).T
+    
+    # Đảm bảo indices không vượt quá độ dài tín hiệu
+    indices = np.minimum(indices, len(padded_signal) - 1)
+    
+    # Trích xuất các frame từ tín hiệu
+    frames = padded_signal[indices.astype(np.int32, copy=False)]
+    
+    return frames
+
+def windowing(frames, window_type='bartlett'):
+    """
+    Áp dụng cửa sổ cho mỗi frame.
+    
+    Args:
+        frames: Mảng 2D chứa các frame
+        window_type: Loại cửa sổ ('hamming', 'hanning', 'blackman', 'bartlett')
+        
+    Returns:
+        Các frame sau khi áp dụng cửa sổ
+    """
+    frame_length = frames.shape[1]
+    
+    if window_type == 'hamming':
+        window = np.hamming(frame_length)
+    elif window_type == 'hanning':
+        window = np.hanning(frame_length)
+    elif window_type == 'blackman':
+        window = np.blackman(frame_length)
+    elif window_type == 'bartlett':
+        window = np.bartlett(frame_length)
+    else:
+        window = np.hamming(frame_length)  # Mặc định là hamming
+        
+    return frames * window
+
+def fft_frames(frames, NFFT=512):
+    """
+    Tính FFT cho mỗi frame và lấy giá trị magnitude.
+    
+    Args:
+        frames: Mảng 2D chứa các frame
+        NFFT: Kích thước FFT (số điểm FFT)
+        
+    Returns:
+        Magnitude của FFT
+    """
+    return np.absolute(np.fft.rfft(frames, NFFT))
+
+def compute_fft_features(signal_in, sample_rate, frame_size=0.025, hop_length=256, 
+                         overlap=0.6, NFFT=512, apply_log=True, window_type='bartlett',
+                         normalize=False):
+    """
+    Tính toán đặc trưng FFT cho tín hiệu âm thanh:
+      - Pre-emphasis, Framing, Windowing.
+      - Tính FFT cho từng frame và lấy giá trị magnitude.
+      - Trung bình các frame để có vector đặc trưng ổn định.
+      
+    Args:
+        signal_in: Tín hiệu đầu vào
+        sample_rate: Tần số lấy mẫu
+        frame_size: Kích thước frame (giây hoặc số mẫu nếu > 1)
+        hop_length: Bước nhảy (giây hoặc số mẫu nếu > 1). Nếu None, sẽ sử dụng overlap
+        overlap: Tỷ lệ chồng lấp giữa các frame (0-1)
+        NFFT: Số điểm FFT
+        apply_log: Áp dụng logarit cho đặc trưng
+        window_type: Loại cửa sổ ('hamming', 'hanning', 'blackman', 'bartlett')
+        normalize: Chuẩn hóa đặc trưng
+        
+    Returns:
+        Vector đặc trưng có kích thước (NFFT//2+1,)
+    """
+    # Áp dụng pre-emphasis
+    emphasized_signal = pre_emphasis(signal_in)
+    
+    # Chia tín hiệu thành các frame
+    frames = framing(emphasized_signal, sample_rate, frame_size, hop_length, overlap)
+    
+    # Áp dụng cửa sổ
+    windowed_frames = windowing(frames, window_type)
+    
+    # Tính FFT
+    mag_frames = fft_frames(windowed_frames, NFFT)
+    
+    # Trung bình theo các frame
+    fft_feature = np.mean(mag_frames, axis=0)
+    
+    # Áp dụng logarithm (nếu cần)
+    if apply_log:
+        fft_feature = np.log(fft_feature + 1e-8)  # Thêm epsilon để tránh log(0)
+    
+    # Chuẩn hóa (nếu cần)
+    if normalize:
+        fft_feature = (fft_feature - np.mean(fft_feature)) / (np.std(fft_feature) + 1e-8)
+    
+    return fft_feature
+
+def load_fft_features_from_directory(directory, sample_rate=22050, NFFT=512, 
+                                     frame_size=0.025, hop_length=256, overlap=0.6,
+                                     window_type='bartlett', output_dir=None, 
+                                     dataset_type='train', normalize=False):
+    """
+    Duyệt qua các file âm thanh trong thư mục và tính đặc trưng FFT cho mỗi file.
+    
+    Args:
+        directory: Thư mục chứa dữ liệu âm thanh
+        sample_rate: Tần số lấy mẫu
+        NFFT: Số điểm FFT
+        frame_size: Kích thước frame (giây hoặc số mẫu nếu > 1)
+        hop_length: Bước nhảy (giây hoặc số mẫu nếu > 1). Nếu None, sẽ sử dụng overlap
+        overlap: Tỷ lệ chồng lấp giữa các frame (0-1)
+        window_type: Loại cửa sổ ('hamming', 'hanning', 'blackman', 'bartlett')
+        output_dir: Thư mục đầu ra để lưu đặc trưng
+        dataset_type: Loại tập dữ liệu ('train', 'test', 'val')
+        normalize: Chuẩn hóa đặc trưng
+        
+    Returns:
+        features: Mảng đặc trưng
+        labels: Nhãn tương ứng
+    """
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    hop_str = f"{hop_length}" if hop_length else f"overlap{overlap}"
+    features_file = os.path.join(output_dir, f'fft_features_{dataset_type}_bartlett_nfft{NFFT}_hop{hop_str}.pkl')
+    labels_file = os.path.join(output_dir, f'fft_labels_{dataset_type}_bartlett_nfft{NFFT}_hop{hop_str}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+        
+        for label in ['bee', 'nobee', 'noqueen']:
+            path = os.path.join(directory, label)
+            if not os.path.exists(path):
+                print(f"Warning: Path {path} does not exist. Skipping.")
+                continue
+                
+            for file in os.listdir(path):
+                if not file.endswith(('.wav', '.mp3', '.flac', '.ogg')):
+                    continue
+                    
+                file_path = os.path.join(path, file)
+                try:
+                    signal, sr = librosa.load(file_path, sr=sample_rate)
+                    fft_feature = compute_fft_features(
+                        signal, sr, frame_size=frame_size, hop_length=hop_length, 
+                        overlap=overlap, NFFT=NFFT, window_type=window_type,
+                        normalize=normalize
+                    )
+                    features.append(fft_feature)
+                    labels.append(label)
+                except Exception as e:
+                    print(f"Error processing file {file_path}: {str(e)}")
+        
+        features = np.array(features)
+        labels = np.array(labels)
+        
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+        
+        end_time = time.time()
+        print(f"FFT extraction time: {end_time - start_time:.2f} seconds")
+        print(f"Features shape: {features.shape}, Labels shape: {labels.shape}")
+    
+    return features, labels
+
+
+
+========================================
+Cell 4 - Loại: CODE
+========================================
+
+>>> Nội dung:
+train_features_fft, train_labels_fft = load_fft_features_from_directory(train_path, sample_rate=22050, NFFT=2048, output_dir=output_dir, dataset_type='train')
+val_features_fft, val_labels_fft = load_fft_features_from_directory(val_path, sample_rate=22050, NFFT=2048, output_dir=output_dir, dataset_type='val')
+test_features_fft, test_labels_fft = load_fft_features_from_directory(test_path, sample_rate=22050, NFFT=2048, output_dir=output_dir, dataset_type='test')
+
+>>> Kết quả:
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+
+
+
+========================================
+Cell 5 - Loại: CODE
+========================================
+
+>>> Nội dung:
+scaler = StandardScaler()
+train_features_fft_scaled = scaler.fit_transform(train_features_fft)
+val_features_fft_scaled = scaler.transform(val_features_fft)
+test_features_fft_scaled = scaler.transform(test_features_fft)
+
+
+
+========================================
+Cell 6 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=5)
+knn_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+val_pred_knn = knn_classifier.predict(val_features_fft)
+test_accuracy_fft_knn = knn_classifier.predict(test_features_fft)
+print(f"KNN (FFT features) - Validation Accuracy: {accuracy_score(val_labels_fft, val_pred_knn)*100:.2f}%")
+print(f"KNN (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_knn)*100:.2f}%")
+
+>>> Kết quả:
+Training time: 0.03 seconds
+KNN (FFT features) - Validation Accuracy: 86.15%
+KNN (FFT features) - Test Accuracy: 86.16%
+
+
+
+========================================
+Cell 7 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+86.09%
+
+86.20% (NFFT=2048, hop_length=256, window_type='hanning')
+
+
+
+========================================
+Cell 8 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=5)
+knn_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+val_pred_knn = knn_classifier.predict(val_features_fft_scaled)
+test_accuracy_fft_knn = knn_classifier.predict(test_features_fft_scaled)
+print(f"KNN (FFT features) - Validation Accuracy: {accuracy_score(val_labels_fft, val_pred_knn)*100:.2f}%")
+print(f"KNN (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_knn)*100:.2f}%")
+
+>>> Kết quả:
+Training time: 0.02 seconds
+KNN (FFT features) - Validation Accuracy: 84.05%
+KNN (FFT features) - Test Accuracy: 84.24%
+
+
+
+========================================
+Cell 9 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+84.86%
+
+84.13% (NFFT=2048, hop_length=256, window_type='hanning')
+
+
+
+========================================
+Cell 10 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=71.19418600172986, kernel='rbf', degree=3, gamma=0.03752055855124281, 
+                         coef0=0.0, shrinking=True, probability=False, tol=0.0005319450186421158, 
+                         cache_size=500, class_weight=None, verbose=False, max_iter=-1, 
+                         decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Kết hợp dữ liệu train và validation để tăng lượng dữ liệu huấn luyện (coi như là 8:2)
+X_combined = np.vstack((train_features_fft, val_features_fft))
+y_combined = np.concatenate((train_labels_fft, val_labels_fft))
+
+# Huấn luyện mô hình SVM trên dữ liệu kết hợp
+svm_rbf_classifier.fit(X_combined, y_combined)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_fft)
+test_accuracy_fft_svm = accuracy_score(test_labels_fft, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {test_accuracy_fft_svm * 100:.2f}%")
+
+>>> Kết quả:
+Training time: 46.71 seconds
+Validation Accuracy (SVM with RBF Kernel): 100.00%
+Test Accuracy (SVM with RBF Kernel): 88.22%
+
+
+
+========================================
+Cell 11 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+86.70%
+
+87.86% (NFFT=2048, hop_length=256, window_type='hanning')
+
+88.15% (NFFT=2048, hop_length=256, window_type='bartlett')
+
+
+
+
+========================================
+Cell 12 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=71.19418600172986, kernel='rbf', degree=3, gamma=0.03752055855124281, 
+                         coef0=0.0, shrinking=True, probability=False, tol=0.0005319450186421158, 
+                         cache_size=500, class_weight=None, verbose=False, max_iter=-1, 
+                         decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Huấn luyện mô hình SVM
+svm_rbf_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ validation
+val_predictions_svm_rbf = svm_rbf_classifier.predict(val_features_fft_scaled)
+val_accuracy_svm_rbf = accuracy_score(val_labels_fft, val_predictions_svm_rbf)
+print(f"Validation Accuracy (SVM with RBF Kernel): {val_accuracy_svm_rbf * 100:.2f}%")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_fft_scaled)
+scale_test_accuracy_fft_svm = accuracy_score(test_labels_fft, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {scale_test_accuracy_fft_svm * 100:.2f}%")
+
+>>> Kết quả:
+Training time: 56.93 seconds
+Validation Accuracy (SVM with RBF Kernel): 86.51%
+Test Accuracy (SVM with RBF Kernel): 87.61%
+
+
+
+========================================
+Cell 13 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+86.99%
+
+86.12% (NFFT=2048, hop_length=256, window_type='hanning')
+
+86.05% (NFFT=2048, hop_length=256, window_type='bartlett')
+
+
+
+
+========================================
+Cell 14 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+lr_classifier = LogisticRegression(penalty='l2', dual=False, tol=0.0001, C=10, fit_intercept=True, intercept_scaling=1, 
+                                   class_weight=None, random_state=42, solver='lbfgs', max_iter=1500, multi_class='deprecated', 
+                                   verbose=0, warm_start=False, n_jobs=None, l1_ratio=None)
+lr_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+val_pred_lr = lr_classifier.predict(val_features_fft)
+test_accuracy_fft_lr = lr_classifier.predict(test_features_fft)
+print(f"Logistic Regression (FFT features) - Validation Accuracy: {accuracy_score(val_labels_fft, val_pred_lr)*100:.2f}%")
+print(f"Logistic Regression (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_lr)*100:.2f}%")
+
+
+>>> Kết quả:
+Training time: 11.68 seconds
+Logistic Regression (FFT features) - Validation Accuracy: 78.61%
+Logistic Regression (FFT features) - Test Accuracy: 79.93%
+
+C:\Users\dinhg\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\LocalCache\local-packages\Python312\site-packages\sklearn\linear_model\_logistic.py:469: ConvergenceWarning: lbfgs failed to converge (status=1):
+STOP: TOTAL NO. of ITERATIONS REACHED LIMIT.
+
+Increase the number of iterations (max_iter) or scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression
+  n_iter_i = _check_optimize_result(
+
+
+
+========================================
+Cell 15 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+79.89%
+
+79.86% (NFFT=2048, hop_length=256, window_type='hanning')
+
+80.04% (NFFT=2048, hop_length=256, window_type='bartlett')
+
+
+
+
+========================================
+Cell 16 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+lr_classifier = LogisticRegression(penalty='l2', dual=False, tol=0.0001, C=10, fit_intercept=True, intercept_scaling=1, 
+                                   class_weight=None, random_state=42, solver='saga', max_iter=1000, multi_class='deprecated', 
+                                   verbose=0, warm_start=False, n_jobs=None, l1_ratio=None)
+
+lr_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+val_pred_lr = lr_classifier.predict(val_features_fft_scaled)
+scale_test_accuracy_fft_lr = lr_classifier.predict(test_features_fft_scaled)
+print(f"Logistic Regression (FFT features) - Validation Accuracy: {accuracy_score(val_labels_fft, val_pred_lr)*100:.2f}%")
+print(f"Logistic Regression (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, scale_test_accuracy_fft_lr)*100:.2f}%")
+
+
+>>> Kết quả:
+Training time: 145.44 seconds
+Logistic Regression (FFT features) - Validation Accuracy: 78.75%
+Logistic Regression (FFT features) - Test Accuracy: 80.11%
+
+C:\Users\dinhg\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\LocalCache\local-packages\Python312\site-packages\sklearn\linear_model\_sag.py:349: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge
+  warnings.warn(
+
+
+
+========================================
+Cell 17 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+79.38%
+
+80.14% (NFFT=2048, hop_length=256, window_type='hanning')
+
+
+
+========================================
+Cell 18 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+rf_classifier = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, min_samples_split=2, 
+                                       min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features='sqrt', 
+                                       max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, 
+                                       n_jobs=None, random_state=42, verbose=0, warm_start=False, class_weight=None, 
+                                       ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+rf_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+val_pred_rf = rf_classifier.predict(val_features_fft)
+test_accuracy_fft_rf = rf_classifier.predict(test_features_fft)
+print(f"Random Forest (FFT features) - Validation Accuracy: {accuracy_score(val_labels_fft, val_pred_rf)*100:.2f}%")
+print(f"Random Forest (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_rf)*100:.2f}%")
+
+>>> Kết quả:
+Training time: 34.56 seconds
+Random Forest (FFT features) - Validation Accuracy: 84.70%
+Random Forest (FFT features) - Test Accuracy: 84.28%
+
+
+
+========================================
+Cell 19 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+84.53%
+
+84.78% (NFFT=2048, hop_length=256, window_type='hanning')
+
+85.58% (NFFT=2048, hop_length=256, window_type='hamming')
+
+
+
+========================================
+Cell 20 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+# Huấn luyện mô hình Extra Trees với dữ liệu đã chuẩn hóa
+et_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ validation
+val_predictions_et = et_classifier.predict(val_features_fft)
+val_accuracy_et = accuracy_score(val_labels_fft, val_predictions_et)
+print(f"Validation Accuracy (Extra Trees): {val_accuracy_et * 100:.2f}%")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(test_features_fft)
+test_accuracy_fft_et = accuracy_score(test_labels_fft, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {test_accuracy_fft_et * 100:.2f}%")
+
+
+>>> Kết quả:
+Training time: 384.52 seconds
+Validation Accuracy (Extra Trees): 87.02%
+Test Accuracy (Extra Trees): 87.25%
+
+
+
+========================================
+Cell 21 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+86.81%
+
+87.46% (NFFT=2048, hop_length=256, window_type='hanning')
+
+
+
+========================================
+Cell 22 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+# Huấn luyện mô hình Extra Trees với dữ liệu đã chuẩn hóa
+et_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ validation
+val_predictions_et = et_classifier.predict(val_features_fft_scaled)
+val_accuracy_et = accuracy_score(val_labels_fft, val_predictions_et)
+print(f"Validation Accuracy (Extra Trees): {val_accuracy_et * 100:.2f}%")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(test_features_fft_scaled)
+scale_test_accuracy_fft_et = accuracy_score(test_labels_fft, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {scale_test_accuracy_fft_et * 100:.2f}%")
+
+
+>>> Kết quả:
+Training time: 404.47 seconds
+Validation Accuracy (Extra Trees): 86.80%
+Test Accuracy (Extra Trees): 86.45%
+
+
+
+========================================
+Cell 23 - Loại: MARKDOWN
+========================================
+
+>>> Nội dung:
+86.81%
+
+87.28% (NFFT=2048, hop_length=256, window_type='hanning')
+
+
+
+========================================
+Cell 24 - Loại: CODE
+========================================
+
+>>> Nội dung:
+import os
+import time
+import numpy as np
+import librosa
+import joblib
+from scipy.stats import skew, kurtosis
+
+def pre_emphasis(signal_in, pre_emph=0.97):
+    """
+    Áp dụng pre-emphasis để nhấn mạnh các tần số cao.
+    
+    Args:
+        signal_in: Tín hiệu đầu vào
+        pre_emph: Hệ số pre-emphasis, mặc định là 0.97
+        
+    Returns:
+        Tín hiệu sau khi áp dụng pre-emphasis
+    """
+    return np.append(signal_in[0], signal_in[1:] - pre_emph * signal_in[:-1])
+
+def framing(signal_in, sample_rate, frame_size=0.025, hop_length=256, overlap=0.6):
+    """
+    Chia tín hiệu thành các frame với kích thước và bước nhảy xác định.
+    
+    Args:
+        signal_in: Tín hiệu đầu vào
+        sample_rate: Tần số lấy mẫu
+        frame_size: Kích thước frame (giây hoặc số mẫu nếu frame_size > 1)
+        hop_length: Bước nhảy (giây hoặc số mẫu nếu hop_length > 1)
+                    Nếu None, sẽ được tính dựa trên overlap
+        overlap: Tỷ lệ chồng lấp giữa các frame, mặc định là 0.6 (60%)
+                Chỉ được sử dụng khi hop_length là None
+        
+    Returns:
+        Mảng 2D chứa các frame
+    """
+    # Xác định kích thước frame trong số mẫu
+    if frame_size <= 1:  # Nếu frame_size <= 1, xem như đơn vị là giây
+        frame_length = int(round(frame_size * sample_rate))
+    else:  # Ngược lại, xem như đơn vị là số mẫu
+        frame_length = int(frame_size)
+    
+    # Xác định hop_length (bước nhảy) trong số mẫu
+    if hop_length is None:
+        # Tính hop_length từ overlap
+        frame_step = int(frame_length * (1 - overlap))
+    elif hop_length <= 1:  # Nếu hop_length <= 1, xem như đơn vị là giây
+        frame_step = int(round(hop_length * sample_rate))
+    else:  # Ngược lại, xem như đơn vị là số mẫu
+        frame_step = int(hop_length)
+    
+    # Đảm bảo hop_length không quá nhỏ
+    frame_step = max(1, frame_step)
+    
+    signal_length = len(signal_in)
+    
+    # Tính số frame cần thiết
+    num_frames = int(np.ceil((signal_length - frame_length) / frame_step)) + 1
+    
+    # Đệm tín hiệu để đảm bảo có đủ mẫu cho tất cả các frame
+    pad_signal_length = (num_frames - 1) * frame_step + frame_length
+    pad_zeros = np.zeros(pad_signal_length - signal_length)
+    padded_signal = np.concatenate([signal_in, pad_zeros])
+    
+    # Tạo indices cho từng frame
+    indices = np.tile(np.arange(0, frame_length), (num_frames, 1)) + \
+              np.tile(np.arange(0, num_frames * frame_step, frame_step), (frame_length, 1)).T
+    
+    # Đảm bảo indices không vượt quá độ dài tín hiệu
+    indices = np.minimum(indices, len(padded_signal) - 1)
+    
+    # Trích xuất các frame từ tín hiệu
+    frames = padded_signal[indices.astype(np.int32, copy=False)]
+    
+    return frames
+
+def windowing(frames, window_type='bartlett'):
+    """
+    Áp dụng cửa sổ cho mỗi frame.
+    
+    Args:
+        frames: Mảng 2D chứa các frame
+        window_type: Loại cửa sổ ('hamming', 'hanning', 'blackman', 'bartlett')
+        
+    Returns:
+        Các frame sau khi áp dụng cửa sổ
+    """
+    frame_length = frames.shape[1]
+    
+    if window_type == 'hamming':
+        window = np.hamming(frame_length)
+    elif window_type == 'hanning':
+        window = np.hanning(frame_length)
+    elif window_type == 'blackman':
+        window = np.blackman(frame_length)
+    elif window_type == 'bartlett':
+        window = np.bartlett(frame_length)
+    else:
+        window = np.hamming(frame_length)  # Mặc định là hamming
+        
+    return frames * window
+
+def fft_frames(frames, NFFT=512):
+    """
+    Tính FFT cho mỗi frame và lấy giá trị magnitude.
+    
+    Args:
+        frames: Mảng 2D chứa các frame
+        NFFT: Kích thước FFT (số điểm FFT)
+        
+    Returns:
+        Magnitude của FFT
+    """
+    return np.absolute(np.fft.rfft(frames, NFFT))
+
+def compute_fftplus_features(signal_in, sample_rate, frame_size=0.025, hop_length=256, 
+                           overlap=0.6, NFFT=512, apply_log=True, window_type='bartlett',
+                           normalize=False):
+    """
+    Tính toán đặc trưng FFTPlus - kết hợp FFT và đặc trưng thống kê miền thời gian.
+    
+    Args:
+        signal_in: Tín hiệu đầu vào
+        sample_rate: Tần số lấy mẫu
+        frame_size: Kích thước frame (giây hoặc số mẫu nếu > 1)
+        hop_length: Bước nhảy (giây hoặc số mẫu nếu > 1). Nếu None, sẽ sử dụng overlap
+        overlap: Tỷ lệ chồng lấp giữa các frame (0-1)
+        NFFT: Số điểm FFT
+        apply_log: Áp dụng logarit cho đặc trưng
+        window_type: Loại cửa sổ ('hamming', 'hanning', 'blackman', 'bartlett')
+        normalize: Chuẩn hóa đặc trưng
+        
+    Returns:
+        Vector đặc trưng có kích thước (NFFT//2+1 + 6,) - FFT + 6 đặc trưng miền thời gian
+    """
+    # Tính đặc trưng thống kê miền thời gian từ tín hiệu gốc
+    mean_signal = np.mean(signal_in)
+    std_signal = np.std(signal_in)
+    skewness_signal = skew(signal_in)
+    kurtosis_signal = kurtosis(signal_in)
+    zcr_signal = np.mean(np.abs(np.diff(np.sign(signal_in))) > 0)  # Tỷ lệ vượt qua số 0
+    energy_signal = np.sum(signal_in**2) / len(signal_in)  # Năng lượng trung bình
+    
+    # Áp dụng pre-emphasis
+    emphasized_signal = pre_emphasis(signal_in)
+    
+    # Chia tín hiệu thành các frame
+    frames = framing(emphasized_signal, sample_rate, frame_size, hop_length, overlap)
+    
+    # Áp dụng cửa sổ
+    windowed_frames = windowing(frames, window_type)
+    
+    # Tính FFT
+    mag_frames = fft_frames(windowed_frames, NFFT)
+    
+    # Trung bình theo các frame
+    fft_feature = np.mean(mag_frames, axis=0)
+    
+    # Áp dụng logarithm (nếu cần)
+    if apply_log:
+        fft_feature = np.log(fft_feature + 1e-8)  # Thêm epsilon để tránh log(0)
+    
+    # Chuẩn hóa (nếu cần)
+    if normalize:
+        fft_feature = (fft_feature - np.mean(fft_feature)) / (np.std(fft_feature) + 1e-8)
+    
+    # Kết hợp đặc trưng FFT và đặc trưng miền thời gian
+    combined_feature = np.concatenate([
+        fft_feature,
+        [mean_signal, std_signal, skewness_signal, kurtosis_signal, zcr_signal, energy_signal]
+    ])
+    
+    return combined_feature
+
+def load_fftplus_features_from_directory(directory, sample_rate=22050, NFFT=512, 
+                                       frame_size=0.025, hop_length=256, overlap=0.6,
+                                       window_type='bartlett', output_dir=None, 
+                                       dataset_type='train', normalize=False):
+    """
+    Duyệt qua các file âm thanh trong thư mục và tính đặc trưng FFTPlus cho mỗi file.
+    
+    Args:
+        directory: Thư mục chứa dữ liệu âm thanh
+        sample_rate: Tần số lấy mẫu
+        NFFT: Số điểm FFT
+        frame_size: Kích thước frame (giây hoặc số mẫu nếu > 1)
+        hop_length: Bước nhảy (giây hoặc số mẫu nếu > 1). Nếu None, sẽ sử dụng overlap
+        overlap: Tỷ lệ chồng lấp giữa các frame (0-1)
+        window_type: Loại cửa sổ ('hamming', 'hanning', 'blackman', 'bartlett')
+        output_dir: Thư mục đầu ra để lưu đặc trưng
+        dataset_type: Loại tập dữ liệu ('train', 'test', 'val')
+        normalize: Chuẩn hóa đặc trưng
+        
+    Returns:
+        features: Mảng đặc trưng
+        labels: Nhãn tương ứng
+    """
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    hop_str = f"{hop_length}" if hop_length else f"overlap{overlap}"
+    features_file = os.path.join(output_dir, f'fftplus_features_{dataset_type}_{window_type}_nfft{NFFT}_hop{hop_str}.pkl')
+    labels_file = os.path.join(output_dir, f'fftplus_labels_{dataset_type}_{window_type}_nfft{NFFT}_hop{hop_str}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+        
+        for label in ['bee', 'nobee', 'noqueen']:
+            path = os.path.join(directory, label)
+            if not os.path.exists(path):
+                print(f"Warning: Path {path} does not exist. Skipping.")
+                continue
+                
+            for file in os.listdir(path):
+                if not file.endswith(('.wav', '.mp3', '.flac', '.ogg')):
+                    continue
+                    
+                file_path = os.path.join(path, file)
+                try:
+                    signal, sr = librosa.load(file_path, sr=sample_rate)
+                    fftplus_feature = compute_fftplus_features(
+                        signal, sr, frame_size=frame_size, hop_length=hop_length, 
+                        overlap=overlap, NFFT=NFFT, window_type=window_type,
+                        normalize=normalize
+                    )
+                    features.append(fftplus_feature)
+                    labels.append(label)
+                except Exception as e:
+                    print(f"Error processing file {file_path}: {str(e)}")
+        
+        features = np.array(features)
+        labels = np.array(labels)
+        
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+        
+        end_time = time.time()
+        print(f"FFTPlus extraction time: {end_time - start_time:.2f} seconds")
+        print(f"Features shape: {features.shape}, Labels shape: {labels.shape}")
+        # Thêm thông báo về số chiều đặc trưng
+        print(f"Each feature vector contains {features.shape[1]} features:")
+        print(f"  - {NFFT//2+1} FFT features")
+        print(f"  - 6 time-domain statistical features (mean, std, skewness, kurtosis, ZCR, energy)")
+    
+    return features, labels
+
+
+
+========================================
+Cell 25 - Loại: CODE
+========================================
+
+>>> Nội dung:
+train_features_fft, train_labels_fft = load_fftplus_features_from_directory(train_path, sample_rate=22050, NFFT=2048, output_dir=output_dir, dataset_type='train')
+val_features_fft, val_labels_fft = load_fftplus_features_from_directory(val_path, sample_rate=22050, NFFT=2048, output_dir=output_dir, dataset_type='val')
+test_features_fft, test_labels_fft = load_fftplus_features_from_directory(test_path, sample_rate=22050, NFFT=2048, output_dir=output_dir, dataset_type='test')
+
+>>> Kết quả:
+Extracting train data...
+FFTPlus extraction time: 109.59 seconds
+Features shape: (9653, 1031), Labels shape: (9653,)
+Each feature vector contains 1031 features:
+  - 1025 FFT features
+  - 6 time-domain statistical features (mean, std, skewness, kurtosis, ZCR, energy)
+Extracting val data...
+FFTPlus extraction time: 18.30 seconds
+Features shape: (1379, 1031), Labels shape: (1379,)
+Each feature vector contains 1031 features:
+  - 1025 FFT features
+  - 6 time-domain statistical features (mean, std, skewness, kurtosis, ZCR, energy)
+Extracting test data...
+FFTPlus extraction time: 37.68 seconds
+Features shape: (2760, 1031), Labels shape: (2760,)
+Each feature vector contains 1031 features:
+  - 1025 FFT features
+  - 6 time-domain statistical features (mean, std, skewness, kurtosis, ZCR, energy)
+
+
+
+========================================
+Cell 26 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=71.19418600172986, kernel='rbf', degree=3, gamma=0.03752055855124281, 
+                         coef0=0.0, shrinking=True, probability=False, tol=0.0005319450186421158, 
+                         cache_size=500, class_weight=None, verbose=False, max_iter=-1, 
+                         decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Kết hợp dữ liệu train và validation để tăng lượng dữ liệu huấn luyện (coi như là 8:2)
+X_combined = np.vstack((train_features_fft, val_features_fft))
+y_combined = np.concatenate((train_labels_fft, val_labels_fft))
+
+# Huấn luyện mô hình SVM trên dữ liệu kết hợp
+svm_rbf_classifier.fit(X_combined, y_combined)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_fft)
+test_accuracy_fft_svm = accuracy_score(test_labels_fft, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {test_accuracy_fft_svm * 100:.2f}%")
+
+>>> Kết quả:
+Training time: 48.45 seconds
+Test Accuracy (SVM with RBF Kernel): 88.12%
+
+
+
+========================================
+Cell 27 - Loại: CODE
+========================================
+
+>>> Nội dung:
+import numpy as np
+from sklearn.svm import SVC
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.metrics import accuracy_score
+from scipy.stats import loguniform
+
+# Define a search space that includes the original parameters
+param_distributions = {
+    'C': loguniform(1, 100),  # Narrower range around original value of 71
+    'gamma': loguniform(0.01, 0.1),  # Narrower range around original value of 0.0375
+    'tol': loguniform(0.0001, 0.001),  # Around original value
+    'cache_size': [500],
+}
+
+# Include the original parameters explicitly
+original_params = {
+    'C': 71.19418600172986,
+    'gamma': 0.03752055855124281,
+    'tol': 0.0005319450186421158,
+    'cache_size': 500
+}
+
+# Setup improved RandomizedSearchCV
+improved_search = RandomizedSearchCV(
+    estimator=SVC(kernel='rbf', random_state=42),
+    param_distributions=param_distributions,
+    n_iter=100,  # Double the number of iterations
+    cv=5,
+    verbose=1,
+    random_state=42,
+    n_jobs=20,
+    scoring='accuracy'
+)
+
+# Always evaluate original parameters for comparison
+def evaluate_with_comparison(X_train, y_train, X_test, y_test):
+    # Train original model
+    original_model = SVC(
+        kernel='rbf', random_state=42,
+        C=original_params['C'],
+        gamma=original_params['gamma'],
+        tol=original_params['tol'],
+        cache_size=original_params['cache_size']
+    )
+    original_model.fit(X_train, y_train)
+    original_accuracy = accuracy_score(y_test, original_model.predict(X_test))
+    
+    # Run improved search
+    improved_search.fit(X_train, y_train)
+    
+    # Train best model
+    best_model = SVC(
+        kernel='rbf', random_state=42,
+        **improved_search.best_params_
+    )
+    best_model.fit(X_train, y_train)
+    tuned_accuracy = accuracy_score(y_test, best_model.predict(X_test))
+    
+    # Compare results
+    print(f"Original model accuracy: {original_accuracy * 100:.2f}%")
+    print(f"Tuned model accuracy: {tuned_accuracy * 100:.2f}%")
+    print(f"Difference: {(tuned_accuracy - original_accuracy) * 100:.2f}%")
+    
+    return original_model, best_model
+
+# Evaluate with FFTPlus features
+original_model_fftplus, best_model_fftplus = evaluate_with_comparison(X_combined, y_combined, test_features_fft, test_labels_fft)
+
+
+>>> Kết quả:
+Fitting 5 folds for each of 100 candidates, totalling 500 fits
+
+
+
+========================================
+Cell 28 - Loại: CODE
+========================================
+
+>>> Nội dung:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=11.400863701127316, kernel='rbf', degree=3, gamma=0.05987474910461398, 
+                         coef0=0.0, shrinking=True, probability=False, tol=0.0001238513729886094, 
+                         cache_size=500, class_weight=None, verbose=False, max_iter=-1, 
+                         decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Kết hợp dữ liệu train và validation để tăng lượng dữ liệu huấn luyện (coi như là 8:2)
+X_combined = np.vstack((train_features_fft, val_features_fft))
+y_combined = np.concatenate((train_labels_fft, val_labels_fft))
+
+# Huấn luyện mô hình SVM trên dữ liệu kết hợp
+svm_rbf_classifier.fit(X_combined, y_combined)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_fft)
+test_accuracy_fft_svm = accuracy_score(test_labels_fft, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {test_accuracy_fft_svm * 100:.2f}%")
+
+>>> Kết quả:
+Training time: 73.81 seconds
+Test Accuracy (SVM with RBF Kernel): 87.64%
+
+
