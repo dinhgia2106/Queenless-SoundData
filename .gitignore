@@ -1,3 +1,5 @@
 *.wav
 *.npy
 20k_audio_splitted_dataset/
+code_extraction.py
+*.pkl
