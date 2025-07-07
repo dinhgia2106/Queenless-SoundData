@@ -3,3 +3,5 @@
 20k_audio_splitted_dataset/
 code_extraction.py
 *.pkl
+/25gb data
+__pycache__
