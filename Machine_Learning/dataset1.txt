@@ -1,0 +1,3152 @@
+--- Cell 1: code ---
+
+### CODE:
+import os
+import librosa
+import numpy as np
+import time
+import joblib
+from sklearn.metrics import accuracy_score
+import librosa.display
+import scipy.fftpack as fftpack
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
+from sklearn.model_selection import GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import MinMaxScaler
+
+
+--- Cell 2: code ---
+
+### CODE:
+train_path = 'D:/Queenless/20k_audio_splitted_dataset/train'
+val_path = 'D:/Queenless/20k_audio_splitted_dataset/val'
+test_path = 'D:/Queenless/20k_audio_splitted_dataset/test'
+
+output_dir = 'D:/Queenless/features'
+os.makedirs(output_dir, exist_ok=True)
+
+--- Cell 3: markdown ---
+
+### MARKDOWN/RAW:
+# FFT (origin)
+
+--- Cell 4: code ---
+
+### CODE:
+from sklearn.preprocessing import LabelEncoder
+
+def extract_fft_features(file_path, n_fft=512):
+    """Extract FFT features from audio file"""
+    try:
+        # Load audio file
+        audio, sr = librosa.load(file_path, sr=None)
+        
+        # Compute FFT
+        fft = np.fft.fft(audio, n=n_fft)
+        fft_magnitude = np.abs(fft[:n_fft//2])  # Take only positive frequencies
+        
+        return fft_magnitude
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
+        return None
+
+def load_dataset_fft():
+    base_path = r"D:\Queenless\20k_audio_splitted_dataset"
+    
+    # Initialize lists
+    train_features_fft, train_labels_fft = [], []
+    val_features_fft, val_labels_fft = [], []
+    test_features_fft, test_labels_fft = [], []
+    
+    # Process each split
+    for split in ['train', 'val', 'test']:
+        for label in ['NonQueen', 'Queen']:
+            folder_path = os.path.join(base_path, split, label)
+            
+            if os.path.exists(folder_path):
+                for file_name in os.listdir(folder_path):
+                    if file_name.endswith('.wav'):
+                        file_path = os.path.join(folder_path, file_name)
+                        features = extract_fft_features(file_path)
+                        
+                        if features is not None:
+                            if split == 'train':
+                                train_features_fft.append(features)
+                                train_labels_fft.append(label)
+                            elif split == 'val':
+                                val_features_fft.append(features)
+                                val_labels_fft.append(label)
+                            elif split == 'test':
+                                test_features_fft.append(features)
+                                test_labels_fft.append(label)
+    
+    # Convert to numpy arrays
+    train_features_fft = np.array(train_features_fft)
+    val_features_fft = np.array(val_features_fft)
+    test_features_fft = np.array(test_features_fft)
+    
+    # Encode labels
+    le = LabelEncoder()
+    all_labels = train_labels_fft + val_labels_fft + test_labels_fft
+    le.fit(all_labels)
+    
+    train_labels_fft = le.transform(train_labels_fft)
+    val_labels_fft = le.transform(val_labels_fft)
+    test_labels_fft = le.transform(test_labels_fft)
+    
+    print(f"Train: {train_features_fft.shape}, Val: {val_features_fft.shape}, Test: {test_features_fft.shape}")
+    
+    return (train_features_fft, train_labels_fft, 
+            val_features_fft, val_labels_fft, 
+            test_features_fft, test_labels_fft)
+
+# Load dataset
+train_features_fft, train_labels_fft, val_features_fft, val_labels_fft, test_features_fft, test_labels_fft = load_dataset_fft()
+
+train_features_fft = np.vstack((train_features_fft, val_features_fft))
+train_labels_fft = np.hstack((train_labels_fft, val_labels_fft))   
+
+### OUTPUT:
+Train: (14066, 256), Val: (2010, 256), Test: (4000, 256)
+
+
+--- Cell 5: code ---
+
+### CODE:
+scaler = StandardScaler()
+train_features_fft_scaled = scaler.fit_transform(train_features_fft)
+test_features_fft_scaled = scaler.transform(test_features_fft)
+
+--- Cell 6: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=55)
+knn_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_fft_knn = knn_classifier.predict(test_features_fft)
+print(f"KNN (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.01 seconds
+KNN (FFT features) - Test Accuracy: 72.32%
+
+
+--- Cell 7: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=55)
+knn_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_fft_knn = knn_classifier.predict(test_features_fft_scaled)
+print(f"KNN (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.01 seconds
+KNN (FFT features) - Test Accuracy: 62.55%
+
+
+--- Cell 8: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Huấn luyện mô hình SVM
+svm_rbf_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_fft)
+test_accuracy_fft_svm = accuracy_score(test_labels_fft, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {test_accuracy_fft_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 59.97 seconds
+Test Accuracy (SVM with RBF Kernel): 73.88%
+
+
+--- Cell 9: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Huấn luyện mô hình SVM
+svm_rbf_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_fft_scaled)
+scale_test_accuracy_fft_svm = accuracy_score(test_labels_fft, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {scale_test_accuracy_fft_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 458.41 seconds
+Test Accuracy (SVM with RBF Kernel): 69.30%
+
+
+--- Cell 10: code ---
+
+### CODE:
+start_time = time.time()
+
+rf_classifier = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, min_samples_split=2, 
+                                       min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features='sqrt', 
+                                       max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, 
+                                       n_jobs=None, random_state=42, verbose=0, warm_start=False, class_weight=None, 
+                                       ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+rf_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_fft_rf = rf_classifier.predict(test_features_fft)
+print(f"Random Forest (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_rf)*100:.2f}%")
+
+### OUTPUT:
+Training time: 49.32 seconds
+Random Forest (FFT features) - Test Accuracy: 73.42%
+
+
+--- Cell 11: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+et_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(test_features_fft)
+test_accuracy_fft_et = accuracy_score(test_labels_fft, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {test_accuracy_fft_et * 100:.2f}%")
+
+
+### OUTPUT:
+Training time: 175.60 seconds
+Test Accuracy (Extra Trees): 75.45%
+
+
+--- Cell 12: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+# Huấn luyện mô hình Extra Trees với dữ liệu đã chuẩn hóa
+et_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(test_features_fft_scaled)
+scale_test_accuracy_fft_et = accuracy_score(test_labels_fft, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {scale_test_accuracy_fft_et * 100:.2f}%")
+
+
+### OUTPUT:
+Training time: 185.65 seconds
+Test Accuracy (Extra Trees): 75.45%
+
+
+--- Cell 13: markdown ---
+
+### MARKDOWN/RAW:
+# FFTs (with pre-emphasis, framing, windowing)
+
+--- Cell 14: code ---
+
+### CODE:
+import numpy as np
+
+def pre_emphasis(signal_in, pre_emph=0.97):
+    """
+    Áp dụng pre-emphasis để nhấn mạnh các tần số cao.
+    """
+    return np.append(signal_in[0], signal_in[1:] - pre_emph * signal_in[:-1])
+
+def framing(signal_in, sample_rate, frame_size=0.025, frame_stride=0.01):
+    """
+    Chia tín hiệu thành các frame có kích thước và bước nhảy xác định.
+    """
+    frame_length = int(round(frame_size * sample_rate))
+    frame_step = int(round(frame_stride * sample_rate))
+    signal_length = len(signal_in)
+    
+    num_frames = int(np.ceil(float(np.abs(signal_length - frame_length)) / frame_step)) + 1
+
+    pad_signal_length = num_frames * frame_step + frame_length
+    pad_signal = np.pad(signal_in, (0, pad_signal_length - signal_length), mode='constant')
+
+    indices = np.arange(0, frame_length) + np.arange(0, num_frames * frame_step, frame_step)[:, None]
+    frames = pad_signal[indices.astype(np.int32)]
+    return frames
+
+def windowing(frames):
+    """
+    Áp dụng cửa sổ Hamming cho mỗi frame.
+    """
+    frame_length = frames.shape[1]
+    hamming = np.hamming(frame_length)
+    return frames * hamming
+
+def fft_frames(frames, NFFT=512):
+    """
+    Tính FFT cho mỗi frame và lấy giá trị magnitude.
+    """
+    return np.abs(np.fft.fft(frames, NFFT))[:, :NFFT//2+1]  # Chỉ lấy giá trị magnitude dương
+
+def compute_fft_features(signal_in, sample_rate, frame_size=0.025, frame_stride=0.01, NFFT=512, apply_log=True):
+    """
+    Tính toán đặc trưng FFT cho tín hiệu âm thanh:
+      - Pre-emphasis, Framing, Windowing.
+      - Tính FFT cho từng frame và lấy giá trị magnitude.
+      - Trung bình các frame để có vector đặc trưng ổn định.
+      - (Tùy chọn) Áp dụng log để giảm phạm vi giá trị.
+    Trả về: vector đặc trưng có kích thước (NFFT/2+1,).
+    """
+    emphasized_signal = pre_emphasis(signal_in)
+    frames = framing(emphasized_signal, sample_rate, frame_size, frame_stride)
+    windowed_frames = windowing(frames)
+    mag_frames = fft_frames(windowed_frames, NFFT)
+    fft_feature = np.mean(mag_frames, axis=0)  # Trung bình theo các frame
+    
+    # Áp dụng log nếu cần, đảm bảo không có log(0)
+    if apply_log:
+        fft_feature = np.log(np.maximum(fft_feature, 1e-8))  # Thêm epsilon để tránh log(0)
+    
+    return fft_feature
+
+
+--- Cell 15: code ---
+
+### CODE:
+def load_fft_features_from_directory(directory, sample_rate=22050, NFFT=512, output_dir=None, dataset_type='train'):
+    """
+    Duyệt qua các file âm thanh trong thư mục và tính đặc trưng FFT cho mỗi file.
+    Giả sử trong directory có hai thư mục con: 'Queen' và 'NonQueen'.
+    
+    Trả về:
+      - features: mảng đặc trưng (mỗi đặc trưng có kích thước NFFT/2+1)
+      - labels: nhãn tương ứng.
+    """
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    features_file = os.path.join(output_dir, f'ffts3_features_{dataset_type}.pkl')
+    labels_file = os.path.join(output_dir, f'ffts3_labels_{dataset_type}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+        
+        for label in ['Queen', 'NonQueen']:
+            path = os.path.join(directory, label)
+            for file in os.listdir(path):
+                file_path = os.path.join(path, file)
+                signal, sr = librosa.load(file_path, sr=sample_rate)
+                fft_feature = compute_fft_features(signal, sr, NFFT=NFFT)
+                features.append(fft_feature)
+                labels.append(label)
+        
+        features = np.array(features)
+        labels = np.array(labels)
+        
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+        
+        end_time = time.time()
+        print(f"FFT extraction time: {end_time - start_time:.2f} seconds")
+    
+    return features, labels
+
+--- Cell 16: code ---
+
+### CODE:
+train_features_fft, train_labels_fft = load_fft_features_from_directory(train_path, sample_rate=22050, NFFT=512, output_dir=output_dir, dataset_type='train')
+val_features_fft, val_labels_fft = load_fft_features_from_directory(val_path, sample_rate=22050, NFFT=512, output_dir=output_dir, dataset_type='val')
+test_features_fft, test_labels_fft = load_fft_features_from_directory(test_path, sample_rate=22050, NFFT=512, output_dir=output_dir, dataset_type='test')
+
+train_features_fft = np.vstack((train_features_fft, val_features_fft))
+train_labels_fft = np.hstack((train_labels_fft, val_labels_fft))    
+
+### OUTPUT:
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+
+
+--- Cell 17: code ---
+
+### CODE:
+train_features_fft.shape
+
+### OUTPUT:
+(16076, 257)
+
+--- Cell 18: code ---
+
+### CODE:
+scaler = StandardScaler()
+train_features_fft_scaled = scaler.fit_transform(train_features_fft)
+test_features_fft_scaled = scaler.transform(test_features_fft)
+
+--- Cell 19: markdown ---
+
+### MARKDOWN/RAW:
+FFTs - KNN
+
+--- Cell 20: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=5)
+knn_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_fft_knn = knn_classifier.predict(test_features_fft)
+print(f"KNN (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.01 seconds
+KNN (FFT features) - Test Accuracy: 95.53%
+
+
+--- Cell 21: markdown ---
+
+### MARKDOWN/RAW:
+94.25% to 95.15%, pre_emph = 0.98 => 95.28
+
+--- Cell 22: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=5)
+knn_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_fft_knn = knn_classifier.predict(test_features_fft_scaled)
+print(f"KNN (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.02 seconds
+KNN (FFT features) - Test Accuracy: 94.65%
+
+
+--- Cell 23: markdown ---
+
+### MARKDOWN/RAW:
+94.25%, pre_emph = 0.98 => 94.42
+
+--- Cell 24: markdown ---
+
+### MARKDOWN/RAW:
+FFTs - SVM
+
+--- Cell 25: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Huấn luyện mô hình SVM
+svm_rbf_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_fft)
+test_accuracy_fft_svm = accuracy_score(test_labels_fft, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {test_accuracy_fft_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 15.65 seconds
+Test Accuracy (SVM with RBF Kernel): 97.60%
+
+
+--- Cell 26: markdown ---
+
+### MARKDOWN/RAW:
+97.47%
+
+--- Cell 27: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Huấn luyện mô hình SVM
+svm_rbf_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_fft_scaled)
+scale_test_accuracy_fft_svm = accuracy_score(test_labels_fft, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {scale_test_accuracy_fft_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 66.98 seconds
+Test Accuracy (SVM with RBF Kernel): 97.82%
+
+
+--- Cell 28: markdown ---
+
+### MARKDOWN/RAW:
+97.82
+
+--- Cell 29: markdown ---
+
+### MARKDOWN/RAW:
+FFTs - RF
+
+--- Cell 30: code ---
+
+### CODE:
+start_time = time.time()
+
+rf_classifier = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, min_samples_split=2, 
+                                       min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features='sqrt', 
+                                       max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, 
+                                       n_jobs=None, random_state=42, verbose=0, warm_start=False, class_weight=None, 
+                                       ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+rf_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_fft_rf = rf_classifier.predict(test_features_fft)
+print(f"Random Forest (FFT features) - Test Accuracy: {accuracy_score(test_labels_fft, test_accuracy_fft_rf)*100:.2f}%")
+
+### OUTPUT:
+Training time: 37.20 seconds
+Random Forest (FFT features) - Test Accuracy: 94.62%
+
+
+--- Cell 31: markdown ---
+
+### MARKDOWN/RAW:
+Not tuning yet
+
+--- Cell 32: markdown ---
+
+### MARKDOWN/RAW:
+FFTs - ET
+
+--- Cell 33: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+et_classifier.fit(train_features_fft, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(test_features_fft)
+test_accuracy_fft_et = accuracy_score(test_labels_fft, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {test_accuracy_fft_et * 100:.2f}%")
+
+
+### OUTPUT:
+Training time: 124.75 seconds
+Test Accuracy (Extra Trees): 96.00%
+
+
+--- Cell 34: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+# Huấn luyện mô hình Extra Trees với dữ liệu đã chuẩn hóa
+et_classifier.fit(train_features_fft_scaled, train_labels_fft)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(test_features_fft_scaled)
+scale_test_accuracy_fft_et = accuracy_score(test_labels_fft, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {scale_test_accuracy_fft_et * 100:.2f}%")
+
+
+### OUTPUT:
+Training time: 128.48 seconds
+Test Accuracy (Extra Trees): 95.97%
+
+
+--- Cell 35: markdown ---
+
+### MARKDOWN/RAW:
+93.95% -> 95.80% beautifull
+
+--- Cell 36: markdown ---
+
+### MARKDOWN/RAW:
+# CQT
+
+--- Cell 37: code ---
+
+### CODE:
+def compute_cqt_features(signal_in, sample_rate, hop_length=512, fmin=None, 
+                         n_bins=84, bins_per_octave=12, apply_log=True):
+    """
+    Tính đặc trưng CQT của tín hiệu:
+      - Sử dụng librosa.cqt để tính ma trận CQT, lấy giá trị magnitude.
+      - (Tùy chọn) Áp dụng log scaling để giảm phạm vi giá trị.
+      - Trung bình theo trục thời gian (axis=1) để thu được vector đặc trưng có kích thước (n_bins,).
+      
+    Nếu fmin không được chỉ định, librosa sẽ tự động sử dụng fmin mặc định.
+    """
+    cqt_matrix = np.abs(librosa.cqt(signal_in, sr=sample_rate, hop_length=hop_length,
+                                    fmin=fmin, n_bins=n_bins, bins_per_octave=bins_per_octave))
+    if apply_log:
+        cqt_matrix = np.log(cqt_matrix + 1e-8)
+    # Trung bình theo trục thời gian (tính trung bình các cột)
+    features = np.mean(cqt_matrix, axis=1)
+    return features
+
+
+--- Cell 38: code ---
+
+### CODE:
+def load_cqt_features_from_directory(directory, sample_rate=22050, hop_length=512, 
+                                     fmin=None, n_bins=84, bins_per_octave=12, output_dir=None, dataset_type='train'):
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    features_file = os.path.join(output_dir, f'cqt_features_{dataset_type}.pkl')
+    labels_file = os.path.join(output_dir, f'cqt_labels_{dataset_type}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+        
+        for label in ['Queen', 'NonQueen']:
+            path = os.path.join(directory, label)
+            for file in os.listdir(path):
+                file_path = os.path.join(path, file)
+                signal, sr = librosa.load(file_path, sr=sample_rate)
+                
+                # Compute CQT features
+                cqt_feature = compute_cqt_features(signal, sr, hop_length=hop_length, 
+                                                   fmin=fmin, n_bins=n_bins, bins_per_octave=bins_per_octave, 
+                                                   apply_log=True)
+                
+                features.append(cqt_feature)
+                labels.append(label)
+
+        features = np.array(features)
+        labels = np.array(labels)
+        
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+        
+        end_time = time.time()
+        print(f"CQT extraction time: {end_time - start_time:.2f} seconds")
+    
+    return features, labels
+
+train_features_cqt, train_labels_cqt = load_cqt_features_from_directory(train_path, sample_rate=22050,
+                                                                        hop_length=512, fmin=None, n_bins=84, bins_per_octave=12, 
+                                                                        output_dir=output_dir, dataset_type='train')
+val_features_cqt, val_labels_cqt = load_cqt_features_from_directory(val_path, sample_rate=22050,
+                                                                    hop_length=512, fmin=None, n_bins=84, bins_per_octave=12, 
+                                                                    output_dir=output_dir, dataset_type='val')
+test_features_cqt, test_labels_cqt = load_cqt_features_from_directory(test_path, sample_rate=22050,
+                                                                      hop_length=512, fmin=None, n_bins=84, bins_per_octave=12, 
+                                                                      output_dir=output_dir, dataset_type='test')
+
+train_features_cqt = np.vstack((train_features_cqt, val_features_cqt))
+train_labels_cqt = np.hstack((train_labels_cqt, val_labels_cqt))
+
+### OUTPUT:
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+
+
+--- Cell 39: code ---
+
+### CODE:
+train_features_cqt.shape
+
+### OUTPUT:
+(16076, 84)
+
+--- Cell 40: code ---
+
+### CODE:
+scaler_cqt = StandardScaler()
+train_features_cqt_scaled = scaler_cqt.fit_transform(train_features_cqt)
+test_features_cqt_scaled  = scaler_cqt.transform(test_features_cqt)
+
+--- Cell 41: markdown ---
+
+### MARKDOWN/RAW:
+CQT - KNN
+
+--- Cell 42: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier_cqt = KNeighborsClassifier(n_neighbors=1, weights='uniform', algorithm='auto', leaf_size=30, p=2, 
+                                      metric='minkowski', metric_params=None, n_jobs=None)
+
+knn_classifier_cqt.fit(train_features_cqt_scaled, train_labels_cqt)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_pred_cqt_knn = knn_classifier_cqt.predict(test_features_cqt_scaled)
+
+test_accuracy_cqt_knn = accuracy_score(test_labels_cqt, test_pred_cqt_knn)
+print(f"KNN (CQT) - Test Accuracy: {test_accuracy_cqt_knn*100:.2f}%")
+
+
+### OUTPUT:
+Training time: 0.01 seconds
+KNN (CQT) - Test Accuracy: 97.85%
+
+
+--- Cell 43: markdown ---
+
+### MARKDOWN/RAW:
+CQT - SVM
+
+--- Cell 44: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_classifier_cqt = SVC(C=100, kernel='rbf', gamma='auto', random_state=42)
+svm_classifier_cqt.fit(train_features_cqt_scaled, train_labels_cqt)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_pred_cqt_svm = svm_classifier_cqt.predict(test_features_cqt_scaled)
+
+test_accuracy_cqt_svm = accuracy_score(test_labels_cqt, test_pred_cqt_svm)
+print(f"SVM (CQT) - Test Accuracy: {test_accuracy_cqt_svm*100:.2f}%")
+
+
+### OUTPUT:
+Training time: 9.46 seconds
+SVM (CQT) - Test Accuracy: 97.12%
+
+
+--- Cell 45: markdown ---
+
+### MARKDOWN/RAW:
+CQT - LR
+
+--- Cell 46: code ---
+
+### CODE:
+start_time = time.time()
+
+lr_classifier_cqt =LogisticRegression(penalty='l2', dual=False, tol=0.0001, C=1.0, 
+                                      fit_intercept=True, intercept_scaling=1, 
+                                      class_weight=None, random_state=None, solver='lbfgs', 
+                                      max_iter=500, multi_class='deprecated', verbose=0, 
+                                      warm_start=False, n_jobs=None, l1_ratio=None)
+
+lr_classifier_cqt.fit(train_features_cqt_scaled, train_labels_cqt)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_pred_cqt_lr = lr_classifier_cqt.predict(test_features_cqt_scaled)
+
+test_accuracy_cqt_lr = accuracy_score(test_labels_cqt, test_pred_cqt_lr)
+print(f"Logistic Regression (CQT) - Test Accuracy: {test_accuracy_cqt_lr*100:.2f}%")
+
+
+### OUTPUT:
+Training time: 0.25 seconds
+Logistic Regression (CQT) - Test Accuracy: 83.55%
+
+
+--- Cell 47: markdown ---
+
+### MARKDOWN/RAW:
+CQT - RF
+
+--- Cell 48: code ---
+
+### CODE:
+start_time = time.time()
+
+rf_classifier_cqt = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, 
+                                       min_samples_split=2, min_samples_leaf=1, min_weight_fraction_leaf=0.0, 
+                                       max_features='sqrt', max_leaf_nodes=None, min_impurity_decrease=0.0, 
+                                       bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, 
+                                       warm_start=False, class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+rf_classifier_cqt.fit(train_features_cqt, train_labels_cqt)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_pred_cqt_rf = rf_classifier_cqt.predict(test_features_cqt)
+
+test_accuracy_cqt_rf = accuracy_score(test_labels_cqt, test_pred_cqt_rf)
+print(f"Random Forest (CQT) - Test Accuracy: {test_accuracy_cqt_rf*100:.2f}%")
+
+
+### OUTPUT:
+Training time: 33.02 seconds
+Random Forest (CQT) - Test Accuracy: 95.35%
+
+
+--- Cell 49: markdown ---
+
+### MARKDOWN/RAW:
+CQT - ET
+
+--- Cell 50: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier_cqt = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+et_classifier_cqt.fit(train_features_cqt_scaled, train_labels_cqt)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_pred_cqt_et = et_classifier_cqt.predict(test_features_cqt_scaled)
+
+test_accuracy_cqt_et = accuracy_score(test_labels_cqt, test_pred_cqt_et)
+print(f"Extra Trees (CQT) - Test Accuracy: {test_accuracy_cqt_et*100:.2f}%")
+
+### OUTPUT:
+Training time: 34.56 seconds
+Extra Trees (CQT) - Test Accuracy: 95.97%
+
+
+--- Cell 51: markdown ---
+
+### MARKDOWN/RAW:
+# STFT
+
+--- Cell 52: code ---
+
+### CODE:
+def compute_stft_features(signal_in, sample_rate, n_fft=2048, hop_length=512, apply_log=True):
+    """
+    Tính đặc trưng STFT của tín hiệu:
+      - Tính STFT bằng librosa.stft và lấy giá trị magnitude.
+      - (Tùy chọn) Áp dụng log scaling.
+      - Trung bình theo trục thời gian (axis=1) để thu được vector đặc trưng có kích thước (n_fft/2+1,).
+    """
+    stft_matrix = np.abs(librosa.stft(signal_in, n_fft=n_fft, hop_length=hop_length))
+    if apply_log:
+        stft_matrix = np.log(stft_matrix + 1e-8)  # Thêm epsilon để tránh log(0)
+    # Trung bình theo trục thời gian (tính trung bình các cột)
+    features = np.mean(stft_matrix, axis=1)
+    return features
+
+def load_stft_features_from_directory(directory, sample_rate=22050, n_fft=2048, hop_length=512, output_dir=None, dataset_type='train'):
+    """
+    Load and compute stft features from audio files in a directory, with improved accuracy.
+    Assumes 'Queen' and 'NonQueen' subdirectories are present.
+    """
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    features_file = os.path.join(output_dir, f'stft2_features_{dataset_type}.pkl')
+    labels_file = os.path.join(output_dir, f'stft2_labels_{dataset_type}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+
+        for label in ['Queen', 'NonQueen']:
+            path = os.path.join(directory, label)
+            for file in os.listdir(path):
+                file_path = os.path.join(path, file)
+                # Load audio file
+                signal, sr = librosa.load(file_path, sr=sample_rate)
+
+                # Compute stft features
+                stft_feature = compute_stft_features(signal, sr, n_fft=n_fft, hop_length=hop_length, apply_log=True)
+
+                features.append(stft_feature)
+                labels.append(label)
+
+        features = np.array(features)
+        labels = np.array(labels)
+
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+
+        end_time = time.time()
+        print(f"stft extraction time: {end_time - start_time:.2f} seconds")
+    
+    return features, labels
+
+stft_train_features, stft_train_labels = load_stft_features_from_directory(train_path, sample_rate=22050, n_fft=4096, hop_length=1024, output_dir=output_dir, dataset_type='train')
+stft_val_features, stft_val_labels = load_stft_features_from_directory(val_path, sample_rate=22050, n_fft=4096, hop_length=1024, output_dir=output_dir, dataset_type='val')
+stft_test_features, stft_test_labels = load_stft_features_from_directory(test_path, sample_rate=22050, n_fft=4096, hop_length=1024, output_dir=output_dir, dataset_type='test')
+
+stft_train_features = np.vstack((stft_train_features, stft_val_features))
+stft_train_labels = np.hstack((stft_train_labels, stft_val_labels))
+
+### OUTPUT:
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+
+
+--- Cell 53: code ---
+
+### CODE:
+stft_train_features.shape
+
+### OUTPUT:
+(16076, 2049)
+
+--- Cell 54: code ---
+
+### CODE:
+scaler_stfts = StandardScaler()
+stft_train_features_scaled = scaler_stfts.fit_transform(stft_train_features)
+stft_test_features_scaled  = scaler_stfts.transform(stft_test_features)
+
+--- Cell 55: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier_stfts = KNeighborsClassifier(n_neighbors=3, weights='uniform', algorithm='auto', leaf_size=30, p=2, 
+                                           metric='minkowski', metric_params=None, n_jobs=None)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+knn_classifier_stfts.fit(stft_train_features, stft_train_labels)
+test_pred_stfts_knn = knn_classifier_stfts.predict(stft_test_features)
+
+test_accuracy_stfts_knn = accuracy_score(stft_test_labels, test_pred_stfts_knn)
+print(f"KNN (STFTs) - Test Accuracy: {test_accuracy_stfts_knn*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.00 seconds
+KNN (STFTs) - Test Accuracy: 97.00%
+
+
+--- Cell 56: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier_stfts = KNeighborsClassifier(n_neighbors=3, weights='uniform', algorithm='auto', leaf_size=30, p=2, 
+                                           metric='minkowski', metric_params=None, n_jobs=None)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+knn_classifier_stfts.fit(stft_train_features_scaled, stft_train_labels)
+test_pred_stfts_knn = knn_classifier_stfts.predict(stft_test_features_scaled)
+
+test_accuracy_stfts_knn = accuracy_score(stft_test_labels, test_pred_stfts_knn)
+print(f"KNN (STFTs) - Test Accuracy: {test_accuracy_stfts_knn*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.00 seconds
+KNN (STFTs) - Test Accuracy: 95.85%
+
+
+--- Cell 57: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=10, kernel='rbf', degree=3, gamma='scale', coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Huấn luyện mô hình SVM
+svm_rbf_classifier.fit(stft_train_features, stft_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(stft_test_features)
+scale_test_accuracy_stfts_svm = accuracy_score(stft_test_labels, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {scale_test_accuracy_stfts_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 272.95 seconds
+Test Accuracy (SVM with RBF Kernel): 86.38%
+
+
+--- Cell 58: markdown ---
+
+### MARKDOWN/RAW:
+# FFTs + STFT
+
+--- Cell 59: code ---
+
+### CODE:
+
+# Kết hợp đặc trưng FFT và STFT
+# Dùng StandardScaler cho từng loại đặc trưng trước khi nối
+
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+
+# Chuẩn hoá đặc trưng FFT
+scaler_fft = StandardScaler()
+fft_train_features_scaled = scaler_fft.fit_transform(train_features_fft)
+fft_test_features_scaled = scaler_fft.transform(test_features_fft)
+
+# Chuẩn hoá đặc trưng STFT
+scaler_stft = StandardScaler()
+stft_train_features_scaled = scaler_stft.fit_transform(stft_train_features)
+stft_test_features_scaled = scaler_stft.transform(stft_test_features)
+
+# Nối đặc trưng FFT và STFT
+fft_stft_train_features = np.concatenate([fft_train_features_scaled, stft_train_features_scaled], axis=1)
+fft_stft_test_features = np.concatenate([fft_test_features_scaled, stft_test_features_scaled], axis=1)
+
+# Huấn luyện và đánh giá bằng KNN với đặc trưng gốc (không chuẩn hoá)
+fft_stft_train_features_noscale = np.concatenate([train_features_fft, stft_train_features], axis=1)
+fft_stft_test_features_noscale = np.concatenate([test_features_fft, stft_test_features], axis=1)
+
+print("Train shape (FFT+STFT):", fft_stft_train_features.shape)
+print("Test shape (FFT+STFT):", fft_stft_test_features.shape)
+
+
+### OUTPUT:
+Train shape (FFT+STFT): (16076, 2306)
+Test shape (FFT+STFT): (4000, 2306)
+
+
+--- Cell 60: code ---
+
+### CODE:
+# Huấn luyện và đánh giá bằng KNN với đặc trưng đã scale (chuẩn hoá)
+knn_classifier_fft_stft = KNeighborsClassifier(n_neighbors=3)
+knn_classifier_fft_stft.fit(fft_stft_train_features, train_labels_fft)
+test_pred_fft_stft_knn = knn_classifier_fft_stft.predict(fft_stft_test_features)
+test_accuracy_fft_stft_knn = accuracy_score(test_labels_fft, test_pred_fft_stft_knn)
+print(f"KNN (FFT+STFT, scaled) - Test Accuracy: {test_accuracy_fft_stft_knn*100:.2f}%")
+
+
+
+knn_classifier_fft_stft_noscale = KNeighborsClassifier(n_neighbors=3)
+knn_classifier_fft_stft_noscale.fit(fft_stft_train_features_noscale, train_labels_fft)
+test_pred_fft_stft_knn_noscale = knn_classifier_fft_stft_noscale.predict(fft_stft_test_features_noscale)
+test_accuracy_fft_stft_knn_noscale = accuracy_score(test_labels_fft, test_pred_fft_stft_knn_noscale)
+print(f"KNN (FFT+STFT, no scaling) - Test Accuracy: {test_accuracy_fft_stft_knn_noscale*100:.2f}%")
+
+
+### OUTPUT:
+KNN (FFT+STFT, scaled) - Test Accuracy: 95.90%
+KNN (FFT+STFT, no scaling) - Test Accuracy: 96.85%
+
+
+--- Cell 61: code ---
+
+### CODE:
+# Huấn luyện và đánh giá bằng SVM với đặc trưng đã scale (chuẩn hoá)
+from sklearn.svm import SVC
+
+svm_classifier_fft_stft = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+svm_classifier_fft_stft.fit(fft_stft_train_features, train_labels_fft)
+test_pred_fft_stft_svm = svm_classifier_fft_stft.predict(fft_stft_test_features)
+test_accuracy_fft_stft_svm = accuracy_score(test_labels_fft, test_pred_fft_stft_svm)
+print(f"SVM (FFT+STFT, scaled) - Test Accuracy: {test_accuracy_fft_stft_svm*100:.2f}%")
+
+# Huấn luyện và đánh giá bằng SVM với đặc trưng gốc (không chuẩn hoá)
+svm_classifier_fft_stft_noscale = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+svm_classifier_fft_stft_noscale.fit(fft_stft_train_features_noscale, train_labels_fft)
+test_pred_fft_stft_svm_noscale = svm_classifier_fft_stft_noscale.predict(fft_stft_test_features_noscale)
+test_accuracy_fft_stft_svm_noscale = accuracy_score(test_labels_fft, test_pred_fft_stft_svm_noscale)
+print(f"SVM (FFT+STFT, no scaling) - Test Accuracy: {test_accuracy_fft_stft_svm_noscale*100:.2f}%")
+
+
+### OUTPUT:
+SVM (FFT+STFT, scaled) - Test Accuracy: 57.50%
+SVM (FFT+STFT, no scaling) - Test Accuracy: 75.88%
+
+
+--- Cell 62: code ---
+
+### CODE:
+# Huấn luyện và đánh giá bằng Random Forest với đặc trưng đã scale (chuẩn hoá)
+from sklearn.ensemble import RandomForestClassifier
+
+# Huấn luyện và đánh giá bằng Random Forest với đặc trưng gốc (không chuẩn hoá)
+rf_classifier_fft_stft_noscale = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_classifier_fft_stft_noscale.fit(fft_stft_train_features_noscale, train_labels_fft)
+test_pred_fft_stft_rf_noscale = rf_classifier_fft_stft_noscale.predict(fft_stft_test_features_noscale)
+test_accuracy_fft_stft_rf_noscale = accuracy_score(test_labels_fft, test_pred_fft_stft_rf_noscale)
+print(f"Random Forest (FFT+STFT, no scaling) - Test Accuracy: {test_accuracy_fft_stft_rf_noscale*100:.2f}%")
+
+
+### OUTPUT:
+Random Forest (FFT+STFT, no scaling) - Test Accuracy: 94.60%
+
+
+--- Cell 63: code ---
+
+### CODE:
+from sklearn.ensemble import ExtraTreesClassifier
+
+# Huấn luyện và đánh giá bằng Extra Trees với đặc trưng gốc (không chuẩn hoá)
+et_classifier_fft_stft_noscale = ExtraTreesClassifier(n_estimators=100, random_state=42)
+et_classifier_fft_stft_noscale.fit(fft_stft_train_features_noscale, train_labels_fft)
+test_pred_fft_stft_et_noscale = et_classifier_fft_stft_noscale.predict(fft_stft_test_features_noscale)
+test_accuracy_fft_stft_et_noscale = accuracy_score(test_labels_fft, test_pred_fft_stft_et_noscale)
+print(f"Extra Trees (FFT+STFT, no scaling) - Test Accuracy: {test_accuracy_fft_stft_et_noscale*100:.2f}%")
+
+
+### OUTPUT:
+Extra Trees (FFT+STFT, no scaling) - Test Accuracy: 93.62%
+
+
+--- Cell 64: markdown ---
+
+### MARKDOWN/RAW:
+# STFTs
+
+--- Cell 65: code ---
+
+### CODE:
+import numpy as np
+import librosa
+
+def pre_emphasis(signal_in, pre_emph=0.97):
+    """
+    Áp dụng pre-emphasis để nhấn mạnh các tần số cao.
+    """
+    return np.append(signal_in[0], signal_in[1:] - pre_emph * signal_in[:-1])
+
+def framing(signal_in, sample_rate, frame_size=0.025, frame_stride=0.01):
+    """
+    Chia tín hiệu thành các frame có kích thước và bước nhảy xác định.
+    """
+    frame_length = int(round(frame_size * sample_rate))
+    frame_step = int(round(frame_stride * sample_rate))
+    signal_length = len(signal_in)
+    
+    num_frames = int(np.ceil(float(np.abs(signal_length - frame_length)) / frame_step)) + 1
+
+    pad_signal_length = num_frames * frame_step + frame_length
+    pad_signal = np.pad(signal_in, (0, pad_signal_length - signal_length), mode='constant')
+
+    indices = np.arange(0, frame_length) + np.arange(0, num_frames * frame_step, frame_step)[:, None]
+    frames = pad_signal[indices.astype(np.int32)]
+    return frames
+
+def windowing(frames):
+    """
+    Áp dụng cửa sổ Hamming cho mỗi frame.
+    """
+    frame_length = frames.shape[1]
+    hamming = np.hamming(frame_length)
+    return frames * hamming
+
+def compute_stfts_features(signal_in, sample_rate, frame_size=0.025, frame_stride=0.01, n_fft=2048, apply_log=True):
+    """
+    Tính toán đặc trưng STFTs cho tín hiệu âm thanh:
+      - Pre-emphasis, Framing, Windowing.
+      - Tính STFT cho từng frame và lấy giá trị magnitude.
+      - Trung bình các frame để có vector đặc trưng ổn định.
+      - (Tùy chọn) Áp dụng log để giảm phạm vi giá trị.
+    Trả về: vector đặc trưng có kích thước (n_fft/2+1,).
+    """
+    emphasized_signal = pre_emphasis(signal_in)
+    frames = framing(emphasized_signal, sample_rate, frame_size, frame_stride)
+    windowed_frames = windowing(frames)
+    
+    # Tính STFT cho từng frame
+    mag_frames = []
+    for frame in windowed_frames:
+        stft = np.abs(librosa.stft(frame, n_fft=n_fft))
+        mag_frames.append(stft[:, 0])  # Lấy cột đầu tiên của STFT
+    
+    mag_frames = np.array(mag_frames)
+    stfts_feature = np.mean(mag_frames, axis=0)  # Trung bình theo các frame
+    
+    # Áp dụng log nếu cần, đảm bảo không có log(0)
+    if apply_log:
+        stfts_feature = np.log(np.maximum(stfts_feature, 1e-8))  # Thêm epsilon để tránh log(0)
+    
+    return stfts_feature
+
+--- Cell 66: code ---
+
+### CODE:
+def load_stfts_features_from_directory(directory, sample_rate=22050, n_fft=2048, 
+                                       frame_size=0.025, frame_stride=0.01, 
+                                       output_dir=None, dataset_type='train'):
+    """
+    Duyệt qua các file âm thanh trong thư mục và tính đặc trưng STFTs cho mỗi file.
+    Giả sử trong directory có hai thư mục con: 'Queen' và 'NonQueen'.
+    
+    Trả về:
+      - features: mảng đặc trưng (mỗi đặc trưng có kích thước n_fft/2+1)
+      - labels: nhãn tương ứng.
+    """
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    features_file = os.path.join(output_dir, f'stfts_features_{dataset_type}.pkl')
+    labels_file = os.path.join(output_dir, f'stfts_labels_{dataset_type}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+        
+        for label in ['Queen', 'NonQueen']:
+            path = os.path.join(directory, label)
+            for file in os.listdir(path):
+                file_path = os.path.join(path, file)
+                signal, sr = librosa.load(file_path, sr=sample_rate)
+                stfts_feature = compute_stfts_features(signal, sr, frame_size=frame_size, 
+                                                       frame_stride=frame_stride, n_fft=n_fft)
+                features.append(stfts_feature)
+                labels.append(label)
+        
+        features = np.array(features)
+        labels = np.array(labels)
+        
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+        
+        end_time = time.time()
+        print(f"STFTs extraction time: {end_time - start_time:.2f} seconds")
+    
+    return features, labels
+
+stfts_train_features, stfts_train_labels = load_stfts_features_from_directory(train_path, sample_rate=22050, 
+                                                                              n_fft=2048, frame_size=0.025, 
+                                                                              frame_stride=0.01, output_dir=output_dir, 
+                                                                              dataset_type='train')
+stfts_val_features, stfts_val_labels = load_stfts_features_from_directory(val_path, sample_rate=22050, 
+                                                                          n_fft=2048, frame_size=0.025, 
+                                                                          frame_stride=0.01, output_dir=output_dir, 
+                                                                          dataset_type='val')
+stfts_test_features, stfts_test_labels = load_stfts_features_from_directory(test_path, sample_rate=22050, 
+                                                                            n_fft=2048, frame_size=0.025, 
+                                                                            frame_stride=0.01, output_dir=output_dir, 
+                                                                            dataset_type='test')
+
+stfts_train_features = np.vstack((stfts_train_features, stfts_val_features))
+stfts_train_labels = np.hstack((stfts_train_labels, stfts_val_labels))
+
+### OUTPUT:
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+
+
+--- Cell 67: code ---
+
+### CODE:
+stfts_train_features.shape
+
+scaler_stfts = StandardScaler()
+stfts_train_features_scaled = scaler_stfts.fit_transform(stfts_train_features)
+stfts_test_features_scaled = scaler_stfts.transform(stfts_test_features)
+
+--- Cell 68: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=5)
+knn_classifier.fit(stfts_train_features, stfts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_stfts_knn = knn_classifier.predict(stfts_test_features)
+print(f"KNN (STFTs features) - Test Accuracy: {accuracy_score(stfts_test_labels, test_accuracy_stfts_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.04 seconds
+KNN (STFTs features) - Test Accuracy: 93.27%
+
+
+--- Cell 69: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=5)
+knn_classifier.fit(stfts_train_features_scaled, stfts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_stfts_knn = knn_classifier.predict(stfts_test_features_scaled)
+print(f"KNN (STFTs features scaled) - Test Accuracy: {accuracy_score(stfts_test_labels, test_accuracy_stfts_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.04 seconds
+KNN (STFTs features scaled) - Test Accuracy: 92.60%
+
+
+--- Cell 70: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+svm_rbf_classifier.fit(stfts_train_features, stfts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_predictions_svm_rbf = svm_rbf_classifier.predict(stfts_test_features)
+test_accuracy_stfts_svm = accuracy_score(stfts_test_labels, test_predictions_svm_rbf)
+print(f"SVM (STFTs features) - Test Accuracy: {test_accuracy_stfts_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 120.63 seconds
+SVM (STFTs features) - Test Accuracy: 96.50%
+
+
+--- Cell 71: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+svm_rbf_classifier.fit(stfts_train_features_scaled, stfts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_predictions_svm_rbf = svm_rbf_classifier.predict(stfts_test_features_scaled)
+scale_test_accuracy_stfts_svm = accuracy_score(stfts_test_labels, test_predictions_svm_rbf)
+print(f"SVM (STFTs features scaled) - Test Accuracy: {scale_test_accuracy_stfts_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 884.20 seconds
+SVM (STFTs features scaled) - Test Accuracy: 57.50%
+
+
+--- Cell 72: code ---
+
+### CODE:
+start_time = time.time()
+
+rf_classifier = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, min_samples_split=2, 
+                                       min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features='sqrt', 
+                                       max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, 
+                                       n_jobs=None, random_state=42, verbose=0, warm_start=False, class_weight=None, 
+                                       ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+rf_classifier.fit(stfts_train_features, stfts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_stfts_rf = rf_classifier.predict(stfts_test_features)
+print(f"Random Forest (STFTs features) - Test Accuracy: {accuracy_score(stfts_test_labels, test_accuracy_stfts_rf)*100:.2f}%")
+
+### OUTPUT:
+Training time: 64.91 seconds
+Random Forest (STFTs features) - Test Accuracy: 92.62%
+
+
+--- Cell 73: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+et_classifier.fit(stfts_train_features, stfts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_predictions_et = et_classifier.predict(stfts_test_features)
+test_accuracy_stfts_et = accuracy_score(stfts_test_labels, test_predictions_et)
+print(f"Extra Trees (STFTs features) - Test Accuracy: {test_accuracy_stfts_et * 100:.2f}%")
+
+### OUTPUT:
+Training time: 932.34 seconds
+Extra Trees (STFTs features) - Test Accuracy: 94.90%
+
+
+--- Cell 74: markdown ---
+
+### MARKDOWN/RAW:
+# FFTs + STFTs
+
+--- Cell 75: code ---
+
+### CODE:
+# FFTs + STFTs: Kết hợp và huấn luyện
+# Kiểm tra kích thước và nhãn
+print(f"FFTs train features shape: {train_features_fft.shape}")
+print(f"STFTs train features shape: {stfts_train_features.shape}")
+print(f"FFTs test features shape: {test_features_fft.shape}")
+print(f"STFTs test features shape: {stfts_test_features.shape}")
+
+if np.array_equal(train_labels_fft, stfts_train_labels) and np.array_equal(test_labels_fft, stfts_test_labels):
+    print("\u2713 Labels are consistent between FFTs and STFTs")
+    combined_train_labels_ffts_stfts = train_labels_fft
+    combined_test_labels_ffts_stfts = test_labels_fft
+else:
+    print("\u26a0 Warning: Labels are not consistent, using FFTs labels")
+    combined_train_labels_ffts_stfts = train_labels_fft
+    combined_test_labels_ffts_stfts = test_labels_fft
+
+# Nối đặc trưng FFTs và STFTs
+combined_train_features_ffts_stfts = np.hstack((train_features_fft, stfts_train_features))
+combined_test_features_ffts_stfts = np.hstack((test_features_fft, stfts_test_features))
+
+print(f"\nCombined FFTs+STFTs train features shape: {combined_train_features_ffts_stfts.shape}")
+print(f"Combined FFTs+STFTs test features shape: {combined_test_features_ffts_stfts.shape}")
+
+# Chuẩn hoá dữ liệu
+scaler_ffts_stfts = StandardScaler()
+combined_train_features_ffts_stfts_scaled = scaler_ffts_stfts.fit_transform(combined_train_features_ffts_stfts)
+combined_test_features_ffts_stfts_scaled = scaler_ffts_stfts.transform(combined_test_features_ffts_stfts)
+
+print("Feature combination (FFTs + STFTs) completed!")
+
+# FFTs + STFTs - KNN (raw)
+start_time = time.time()
+knn_ffts_stfts = KNeighborsClassifier(n_neighbors=5)
+knn_ffts_stfts.fit(combined_train_features_ffts_stfts, combined_train_labels_ffts_stfts)
+print(f"Training time (KNN raw): {time.time() - start_time:.2f} seconds")
+
+pred_knn_raw = knn_ffts_stfts.predict(combined_test_features_ffts_stfts)
+acc_knn_raw = accuracy_score(combined_test_labels_ffts_stfts, pred_knn_raw)
+print(f"KNN (FFTs + STFTs) - Test Accuracy: {acc_knn_raw*100:.2f}%")
+
+# FFTs + STFTs - KNN (scaled)
+start_time = time.time()
+knn_ffts_stfts_scaled = KNeighborsClassifier(n_neighbors=5)
+knn_ffts_stfts_scaled.fit(combined_train_features_ffts_stfts_scaled, combined_train_labels_ffts_stfts)
+print(f"Training time (KNN scaled): {time.time() - start_time:.2f} seconds")
+
+pred_knn_scaled = knn_ffts_stfts_scaled.predict(combined_test_features_ffts_stfts_scaled)
+acc_knn_scaled = accuracy_score(combined_test_labels_ffts_stfts, pred_knn_scaled)
+print(f"KNN (FFTs + STFTs scaled) - Test Accuracy: {acc_knn_scaled*100:.2f}%")
+
+# FFTs + STFTs - SVM (raw)
+start_time = time.time()
+svm_ffts_stfts = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                     probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                     max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+svm_ffts_stfts.fit(combined_train_features_ffts_stfts, combined_train_labels_ffts_stfts)
+print(f"Training time (SVM raw): {time.time() - start_time:.2f} seconds")
+
+pred_svm_raw = svm_ffts_stfts.predict(combined_test_features_ffts_stfts)
+acc_svm_raw = accuracy_score(combined_test_labels_ffts_stfts, pred_svm_raw)
+print(f"SVM (FFTs + STFTs) - Test Accuracy: {acc_svm_raw*100:.2f}%")
+
+# FFTs + STFTs - SVM (scaled)
+start_time = time.time()
+svm_ffts_stfts_scaled = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                            probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                            max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+svm_ffts_stfts_scaled.fit(combined_train_features_ffts_stfts_scaled, combined_train_labels_ffts_stfts)
+print(f"Training time (SVM scaled): {time.time() - start_time:.2f} seconds")
+
+pred_svm_scaled = svm_ffts_stfts_scaled.predict(combined_test_features_ffts_stfts_scaled)
+acc_svm_scaled = accuracy_score(combined_test_labels_ffts_stfts, pred_svm_scaled)
+print(f"SVM (FFTs + STFTs scaled) - Test Accuracy: {acc_svm_scaled*100:.2f}%")
+
+# FFTs + STFTs - RF
+start_time = time.time()
+rf_ffts_stfts = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, min_samples_split=2, 
+                                      min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features='sqrt', 
+                                      max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, 
+                                      n_jobs=None, random_state=42, verbose=0, warm_start=False, class_weight=None, 
+                                      ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+rf_ffts_stfts.fit(combined_train_features_ffts_stfts, combined_train_labels_ffts_stfts)
+print(f"Training time (RF): {time.time() - start_time:.2f} seconds")
+
+pred_rf = rf_ffts_stfts.predict(combined_test_features_ffts_stfts)
+acc_rf = accuracy_score(combined_test_labels_ffts_stfts, pred_rf)
+print(f"Random Forest (FFTs + STFTs) - Test Accuracy: {acc_rf*100:.2f}%")
+
+# FFTs + STFTs - ET
+start_time = time.time()
+et_ffts_stfts = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                    min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                    bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                    class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+et_ffts_stfts.fit(combined_train_features_ffts_stfts, combined_train_labels_ffts_stfts)
+print(f"Training time (ET): {time.time() - start_time:.2f} seconds")
+
+pred_et = et_ffts_stfts.predict(combined_test_features_ffts_stfts)
+acc_et = accuracy_score(combined_test_labels_ffts_stfts, pred_et)
+print(f"Extra Trees (FFTs + STFTs) - Test Accuracy: {acc_et*100:.2f}%")
+
+
+### OUTPUT:
+FFTs train features shape: (16076, 257)
+STFTs train features shape: (16076, 2050)
+FFTs test features shape: (4000, 257)
+STFTs test features shape: (4000, 2050)
+✓ Labels are consistent between FFTs and STFTs
+
+Combined FFTs+STFTs train features shape: (16076, 2307)
+Combined FFTs+STFTs test features shape: (4000, 2307)
+Feature combination (FFTs + STFTs) completed!
+Training time (KNN raw): 0.07 seconds
+KNN (FFTs + STFTs) - Test Accuracy: 93.90%
+Training time (KNN scaled): 0.05 seconds
+KNN (FFTs + STFTs scaled) - Test Accuracy: 93.10%
+Training time (SVM raw): 156.25 seconds
+SVM (FFTs + STFTs) - Test Accuracy: 97.92%
+Training time (SVM scaled): 1058.93 seconds
+SVM (FFTs + STFTs scaled) - Test Accuracy: 57.50%
+Training time (RF): 72.29 seconds
+Random Forest (FFTs + STFTs) - Test Accuracy: 94.00%
+Training time (ET): 958.56 seconds
+Extra Trees (FFTs + STFTs) - Test Accuracy: 95.65%
+
+
+--- Cell 76: markdown ---
+
+### MARKDOWN/RAW:
+# CQTs
+
+--- Cell 77: code ---
+
+### CODE:
+import numpy as np
+import librosa
+
+def pre_emphasis(signal_in, pre_emph=0.97):
+    """
+    Áp dụng pre-emphasis để nhấn mạnh các tần số cao.
+    """
+    return np.append(signal_in[0], signal_in[1:] - pre_emph * signal_in[:-1])
+
+def framing(signal_in, sample_rate, frame_size=0.025, frame_stride=0.01):
+    """
+    Chia tín hiệu thành các frame có kích thước và bước nhảy xác định.
+    """
+    frame_length = int(round(frame_size * sample_rate))
+    frame_step = int(round(frame_stride * sample_rate))
+    signal_length = len(signal_in)
+    
+    num_frames = int(np.ceil(float(np.abs(signal_length - frame_length)) / frame_step)) + 1
+
+    pad_signal_length = num_frames * frame_step + frame_length
+    pad_signal = np.pad(signal_in, (0, pad_signal_length - signal_length), mode='constant')
+
+    indices = np.arange(0, frame_length) + np.arange(0, num_frames * frame_step, frame_step)[:, None]
+    frames = pad_signal[indices.astype(np.int32)]
+    return frames
+
+def windowing(frames):
+    """
+    Áp dụng cửa sổ Hamming cho mỗi frame.
+    """
+    frame_length = frames.shape[1]
+    hamming = np.hamming(frame_length)
+    return frames * hamming
+
+def compute_cqts_features(signal_in, sample_rate, frame_size=0.025, frame_stride=0.01, 
+                          fmin=None, n_bins=84, bins_per_octave=12, apply_log=True):
+    """
+    Tính toán đặc trưng CQTs cho tín hiệu âm thanh:
+      - Pre-emphasis trên toàn bộ tín hiệu
+      - Framing và Windowing
+      - Tính CQT cho toàn bộ tín hiệu (không tính theo từng frame vì CQT cần tín hiệu dài)
+      - (Tùy chọn) Áp dụng log để giảm phạm vi giá trị.
+    Trả về: vector đặc trưng có kích thước (n_bins,).
+    """
+    # Pre-emphasis trên toàn bộ tín hiệu
+    emphasized_signal = pre_emphasis(signal_in)
+    
+    # Tính CQT cho toàn bộ tín hiệu đã pre-emphasize
+    cqt_matrix = np.abs(librosa.cqt(emphasized_signal, sr=sample_rate, 
+                                     fmin=fmin, n_bins=n_bins, 
+                                     bins_per_octave=bins_per_octave,
+                                     hop_length=512))
+    
+    # Trung bình theo thời gian để có vector đặc trưng
+    cqts_feature = np.mean(cqt_matrix, axis=1)
+    
+    # Áp dụng log nếu cần, đảm bảo không có log(0)
+    if apply_log:
+        cqts_feature = np.log(np.maximum(cqts_feature, 1e-8))  # Thêm epsilon để tránh log(0)
+    
+    return cqts_feature
+
+--- Cell 78: code ---
+
+### CODE:
+def load_cqts_features_from_directory(directory, sample_rate=22050, frame_size=0.025, 
+                                       frame_stride=0.01, fmin=None, n_bins=84, 
+                                       bins_per_octave=12, output_dir=None, dataset_type='train'):
+    """
+    Duyệt qua các file âm thanh trong thư mục và tính đặc trưng CQTs cho mỗi file.
+    Giả sử trong directory có hai thư mục con: 'Queen' và 'NonQueen'.
+    
+    Trả về:
+      - features: mảng đặc trưng (mỗi đặc trưng có kích thước n_bins)
+      - labels: nhãn tương ứng.
+    """
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    features_file = os.path.join(output_dir, f'cqts_features_{dataset_type}.pkl')
+    labels_file = os.path.join(output_dir, f'cqts_labels_{dataset_type}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+        
+        for label in ['Queen', 'NonQueen']:
+            path = os.path.join(directory, label)
+            for file in os.listdir(path):
+                file_path = os.path.join(path, file)
+                signal, sr = librosa.load(file_path, sr=sample_rate)
+                cqts_feature = compute_cqts_features(signal, sr, frame_size=frame_size, 
+                                                     frame_stride=frame_stride, fmin=fmin,
+                                                     n_bins=n_bins, bins_per_octave=bins_per_octave)
+                features.append(cqts_feature)
+                labels.append(label)
+        
+        features = np.array(features)
+        labels = np.array(labels)
+        
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+        
+        end_time = time.time()
+        print(f"CQTs extraction time: {end_time - start_time:.2f} seconds")
+    
+    return features, labels
+
+cqts_train_features, cqts_train_labels = load_cqts_features_from_directory(train_path, sample_rate=22050, 
+                                                                          frame_size=0.025, frame_stride=0.01, 
+                                                                          fmin=None, n_bins=84, bins_per_octave=12, 
+                                                                          output_dir=output_dir, dataset_type='train')
+cqts_val_features, cqts_val_labels = load_cqts_features_from_directory(val_path, sample_rate=22050, 
+                                                                       frame_size=0.025, frame_stride=0.01, 
+                                                                       fmin=None, n_bins=84, bins_per_octave=12, 
+                                                                       output_dir=output_dir, dataset_type='val')
+cqts_test_features, cqts_test_labels = load_cqts_features_from_directory(test_path, sample_rate=22050, 
+                                                                         frame_size=0.025, frame_stride=0.01, 
+                                                                         fmin=None, n_bins=84, bins_per_octave=12, 
+                                                                         output_dir=output_dir, dataset_type='test')
+
+cqts_train_features = np.vstack((cqts_train_features, cqts_val_features))
+cqts_train_labels = np.hstack((cqts_train_labels, cqts_val_labels))
+
+### OUTPUT:
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+
+
+--- Cell 79: code ---
+
+### CODE:
+cqts_train_features.shape
+
+scaler_cqts = StandardScaler()
+cqts_train_features_scaled = scaler_cqts.fit_transform(cqts_train_features)
+cqts_test_features_scaled = scaler_cqts.transform(cqts_test_features)
+
+--- Cell 80: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=5)
+knn_classifier.fit(cqts_train_features, cqts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_cqts_knn = knn_classifier.predict(cqts_test_features)
+print(f"KNN (CQTs features) - Test Accuracy: {accuracy_score(cqts_test_labels, test_accuracy_cqts_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.01 seconds
+KNN (CQTs features) - Test Accuracy: 96.10%
+
+
+--- Cell 81: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=5)
+knn_classifier.fit(cqts_train_features_scaled, cqts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_cqts_knn = knn_classifier.predict(cqts_test_features_scaled)
+print(f"KNN (CQTs features scaled) - Test Accuracy: {accuracy_score(cqts_test_labels, test_accuracy_cqts_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.01 seconds
+KNN (CQTs features scaled) - Test Accuracy: 96.43%
+
+
+--- Cell 82: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+svm_rbf_classifier.fit(cqts_train_features, cqts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_predictions_svm_rbf = svm_rbf_classifier.predict(cqts_test_features)
+test_accuracy_cqts_svm = accuracy_score(cqts_test_labels, test_predictions_svm_rbf)
+print(f"SVM (CQTs features) - Test Accuracy: {test_accuracy_cqts_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 3.39 seconds
+SVM (CQTs features) - Test Accuracy: 98.02%
+
+
+--- Cell 83: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+svm_rbf_classifier.fit(cqts_train_features_scaled, cqts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_predictions_svm_rbf = svm_rbf_classifier.predict(cqts_test_features_scaled)
+scale_test_accuracy_cqts_svm = accuracy_score(cqts_test_labels, test_predictions_svm_rbf)
+print(f"SVM (CQTs features scaled) - Test Accuracy: {scale_test_accuracy_cqts_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 5.71 seconds
+SVM (CQTs features scaled) - Test Accuracy: 98.08%
+
+
+--- Cell 84: code ---
+
+### CODE:
+start_time = time.time()
+
+rf_classifier = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, min_samples_split=2, 
+                                       min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features='sqrt', 
+                                       max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, 
+                                       n_jobs=None, random_state=42, verbose=0, warm_start=False, class_weight=None, 
+                                       ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+rf_classifier.fit(cqts_train_features, cqts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_cqts_rf = rf_classifier.predict(cqts_test_features)
+print(f"Random Forest (CQTs features) - Test Accuracy: {accuracy_score(cqts_test_labels, test_accuracy_cqts_rf)*100:.2f}%")
+
+### OUTPUT:
+Training time: 11.23 seconds
+Random Forest (CQTs features) - Test Accuracy: 95.25%
+
+
+--- Cell 85: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+et_classifier.fit(cqts_train_features, cqts_train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_predictions_et = et_classifier.predict(cqts_test_features)
+test_accuracy_cqts_et = accuracy_score(cqts_test_labels, test_predictions_et)
+print(f"Extra Trees (CQTs features) - Test Accuracy: {test_accuracy_cqts_et * 100:.2f}%")
+
+### OUTPUT:
+Training time: 19.00 seconds
+Extra Trees (CQTs features) - Test Accuracy: 95.78%
+
+
+--- Cell 86: markdown ---
+
+### MARKDOWN/RAW:
+# FFT + CQT
+
+--- Cell 87: code ---
+
+### CODE:
+def pre_emphasis(signal_in, pre_emph=0.97):
+    """
+    Áp dụng pre-emphasis để nhấn mạnh các tần số cao.
+    
+    Args:
+        signal_in: Tín hiệu đầu vào
+        pre_emph: Hệ số pre-emphasis, mặc định là 0.97
+        
+    Returns:
+        Tín hiệu sau khi áp dụng pre-emphasis
+    """
+    return np.append(signal_in[0], signal_in[1:] - pre_emph * signal_in[:-1])
+
+def framing(signal_in, sample_rate, frame_size=0.025, frame_stride=0.01):
+    """
+    Chia tín hiệu thành các frame có kích thước và bước nhảy xác định.
+    """
+    frame_length = int(round(frame_size * sample_rate))
+    frame_step = int(round(frame_stride * sample_rate))
+    signal_length = len(signal_in)
+    num_frames = int(np.ceil(np.abs(signal_length - frame_length) / frame_step)) + 1
+
+    pad_signal_length = num_frames * frame_step + frame_length
+    z = np.zeros((pad_signal_length - signal_length))
+    pad_signal = np.append(signal_in, z)
+
+    indices = np.tile(np.arange(0, frame_length), (num_frames, 1)) + \
+              np.tile(np.arange(0, num_frames * frame_step, frame_step), (frame_length, 1)).T
+    frames = pad_signal[indices.astype(np.int32, copy=False)]
+    return frames
+
+def windowing(frames):
+    """
+    Áp dụng cửa sổ Hamming cho mỗi frame.
+    """
+    frame_length = frames.shape[1]
+    hamming = np.hamming(frame_length)
+    return frames * hamming
+
+def fft_frames(frames, NFFT=512):
+    """
+    Tính FFT cho mỗi frame và lấy giá trị magnitude.
+    """
+    return np.absolute(np.fft.rfft(frames, NFFT))
+
+def compute_fft_features(signal_in, sample_rate, frame_size=0.025, frame_stride=0.01, NFFT=512, apply_log=True):
+    """
+    Tính toán đặc trưng FFT cho tín hiệu âm thanh:
+      - Pre-emphasis, Framing, Windowing.
+      - Tính FFT cho từng frame và lấy giá trị magnitude.
+      - Trung bình các frame để có vector đặc trưng ổn định.
+      - (Tùy chọn) Áp dụng log để giảm phạm vi giá trị.
+      
+    Trả về: vector đặc trưng có kích thước (NFFT/2+1,).
+    """
+    emphasized_signal = pre_emphasis(signal_in)
+    frames = framing(emphasized_signal, sample_rate, frame_size, frame_stride)
+    windowed_frames = windowing(frames)
+    mag_frames = fft_frames(windowed_frames, NFFT)
+    fft_feature = np.mean(mag_frames, axis=0)  # Trung bình theo các frame
+    if apply_log:
+        fft_feature = np.log(fft_feature + 1e-8)  # Thêm epsilon để tránh log(0)
+    return fft_feature
+
+def compute_cqt_features(signal_in, sample_rate, fmin=None, 
+                         n_bins=84, bins_per_octave=12, apply_log=True):
+    """
+    Tính đặc trưng CQT của tín hiệu:
+      - Sử dụng librosa.cqt để tính ma trận CQT, lấy giá trị magnitude.
+      - (Tùy chọn) Áp dụng log scaling để giảm phạm vi giá trị.
+      - Trung bình theo trục thời gian (axis=1) để thu được vector đặc trưng có kích thước (n_bins,).
+      
+    Args:
+        signal_in: Tín hiệu đầu vào
+        sample_rate: Tần số lấy mẫu
+        fmin: Tần số thấp nhất (Hz). Nếu None, librosa sẽ sử dụng mặc định
+        n_bins: Số lượng bin tần số
+        bins_per_octave: Số lượng bin cho mỗi quãng 8
+        apply_log: Áp dụng logarit cho đặc trưng
+        
+    Returns:
+        Vector đặc trưng CQT có kích thước (n_bins,)
+    """
+    cqt_matrix = np.abs(librosa.cqt(signal_in, sr=sample_rate,
+                                    fmin=fmin, n_bins=n_bins, bins_per_octave=bins_per_octave))
+    
+    # Trung bình theo trục thời gian (tính trung bình các cột)
+    cqt_feature = np.mean(cqt_matrix, axis=1)
+    
+    # Áp dụng logarithm (nếu cần)
+    if apply_log:
+        cqt_feature = np.log(cqt_feature + 1e-8)  # Thêm epsilon để tránh log(0)
+    
+    return cqt_feature
+
+def compute_features(signal_in, sample_rate, frame_size=0.025,
+                     NFFT=512,
+                     fmin=None, n_bins=84, bins_per_octave=12, apply_log=True):
+    """
+    Tính toán và kết hợp đặc trưng FFT và CQT cho tín hiệu âm thanh.
+    
+    Args:
+        signal_in: Tín hiệu đầu vào
+        sample_rate: Tần số lấy mẫu
+        frame_size: Kích thước frame cho FFT (giây hoặc số mẫu nếu > 1)
+        NFFT: Số điểm FFT
+        fmin: Tần số thấp nhất (Hz) cho CQT
+        n_bins: Số lượng bin tần số cho CQT
+        bins_per_octave: Số lượng bin cho mỗi quãng 8 cho CQT
+        apply_log: Áp dụng logarit cho đặc trưng
+        
+    Returns:
+        Vector đặc trưng kết hợp FFT và CQT
+    """
+    # Tính đặc trưng FFT
+    fft_feature = compute_fft_features(
+        signal_in, sample_rate, frame_size=frame_size,
+        NFFT=NFFT,
+        apply_log=apply_log
+    )
+    
+    # Tính đặc trưng CQT
+    cqt_feature = compute_cqt_features(
+        signal_in, sample_rate, fmin=fmin,
+        n_bins=n_bins, bins_per_octave=bins_per_octave,
+        apply_log=apply_log
+    )
+    
+    # Kết hợp hai đặc trưng
+    combined_feature = np.concatenate((fft_feature, cqt_feature))
+    
+    return combined_feature
+
+def load_features_from_directory(directory, sample_rate=22050, NFFT=512, 
+                                 frame_size=0.025,
+                                 output_dir=None, 
+                                 dataset_type='train',
+                                 fmin=None, n_bins=84, bins_per_octave=12):
+    """
+    Duyệt qua các file âm thanh trong thư mục và tính đặc trưng kết hợp FFT và CQT cho mỗi file.
+    
+    Args:
+        directory: Thư mục chứa dữ liệu âm thanh
+        sample_rate: Tần số lấy mẫu
+        NFFT: Số điểm FFT
+        frame_size: Kích thước frame (giây hoặc số mẫu nếu > 1)
+        output_dir: Thư mục đầu ra để lưu đặc trưng
+        dataset_type: Loại tập dữ liệu ('train', 'test', 'val')
+        fmin: Tần số thấp nhất (Hz) cho CQT
+        n_bins: Số lượng bin tần số cho CQT
+        bins_per_octave: Số lượng bin cho mỗi quãng 8 cho CQT
+        
+    Returns:
+        features: Mảng đặc trưng kết hợp
+        labels: Nhãn tương ứng
+    """
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    features_file = os.path.join(output_dir, f'combined_features2_{dataset_type}_nfft{NFFT}_bins{n_bins}.pkl')
+    labels_file = os.path.join(output_dir, f'combined_labels2_{dataset_type}_nfft{NFFT}_bins{n_bins}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+        
+        for label in ['NonQueen', 'Queen']:
+            path = os.path.join(directory, label)
+            if not os.path.exists(path):
+                print(f"Warning: Path {path} does not exist. Skipping.")
+                continue
+                
+            for file in os.listdir(path):
+                if not file.endswith(('.wav', '.mp3', '.flac', '.ogg')):
+                    continue
+                    
+                file_path = os.path.join(path, file)
+                try:
+                    signal, sr = librosa.load(file_path, sr=sample_rate)
+                    
+                    # Tính toán đặc trưng kết hợp FFT và CQT
+                    combined_feature = compute_features(
+                        signal, sr, frame_size=frame_size,
+                        NFFT=NFFT,
+                        fmin=fmin, n_bins=n_bins, 
+                        bins_per_octave=bins_per_octave
+                    )
+                    
+                    features.append(combined_feature)
+                    labels.append(label)
+                except Exception as e:
+                    print(f"Error processing file {file_path}: {str(e)}")
+        
+        features = np.array(features)
+        labels = np.array(labels)
+        
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+        
+        end_time = time.time()
+        print(f"Feature extraction time: {end_time - start_time:.2f} seconds")
+        print(f"Features shape: {features.shape}, Labels shape: {labels.shape}")
+    
+    return features, labels
+
+# Trích xuất đặc trưng kết hợp cho tập dữ liệu
+train_features, train_labels = load_features_from_directory(
+    train_path, sample_rate=22050, NFFT=512, fmin=None, n_bins=96, bins_per_octave=12,
+    output_dir=output_dir, dataset_type='train'
+)
+
+val_features, val_labels = load_features_from_directory(
+    val_path, sample_rate=22050, NFFT=512, fmin=None, n_bins=96, bins_per_octave=12,
+    output_dir=output_dir, dataset_type='val'
+)
+
+test_features, test_labels = load_features_from_directory(
+    test_path, sample_rate=22050, NFFT=512, fmin=None, n_bins=96, bins_per_octave=12,
+    output_dir=output_dir, dataset_type='test'
+)
+
+train_features = np.vstack((train_features, val_features))
+train_labels = np.hstack((train_labels, val_labels))
+
+### OUTPUT:
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+
+
+--- Cell 88: code ---
+
+### CODE:
+train_features.shape
+
+### OUTPUT:
+(16076, 353)
+
+--- Cell 89: code ---
+
+### CODE:
+scaler = StandardScaler()
+train_features_scaled = scaler.fit_transform(train_features)
+test_features_scaled  = scaler.transform(test_features)
+
+--- Cell 90: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=1)
+knn_classifier.fit(train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_knn = knn_classifier.predict(test_features)
+print(f"KNN (FFT features) - Test Accuracy: {accuracy_score(test_labels, test_accuracy_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.02 seconds
+KNN (FFT features) - Test Accuracy: 97.47%
+
+
+--- Cell 91: code ---
+
+### CODE:
+start_time = time.time()
+
+knn_classifier = KNeighborsClassifier(n_neighbors=1)
+knn_classifier.fit(train_features_scaled, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_knn = knn_classifier.predict(test_features_scaled)
+print(f"KNN (FFT features) - Test Accuracy: {accuracy_score(test_labels, test_accuracy_knn)*100:.2f}%")
+
+### OUTPUT:
+Training time: 0.02 seconds
+KNN (FFT features) - Test Accuracy: 97.28%
+
+
+--- Cell 92: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+svm_rbf_classifier.fit(train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features)
+test_accuracy_svm = accuracy_score(test_labels, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {test_accuracy_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 84.69 seconds
+Test Accuracy (SVM with RBF Kernel): 98.60%
+
+
+--- Cell 93: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=200, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+# Huấn luyện mô hình SVM
+svm_rbf_classifier.fit(train_features_scaled, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features_scaled)
+scale_test_accuracy_svm = accuracy_score(test_labels, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {scale_test_accuracy_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 157.60 seconds
+Test Accuracy (SVM with RBF Kernel): 98.20%
+
+
+--- Cell 94: code ---
+
+### CODE:
+start_time = time.time()
+
+lr_classifier = LogisticRegression(penalty='l2', dual=False, tol=0.0001, C=10, fit_intercept=True, intercept_scaling=1, 
+                                   class_weight=None, random_state=42, solver='lbfgs', max_iter=1500, multi_class='deprecated', 
+                                   verbose=0, warm_start=False, n_jobs=None, l1_ratio=None)
+lr_classifier.fit(train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_lr = lr_classifier.predict(test_features)
+print(f"Logistic Regression (FFT features) - Test Accuracy: {accuracy_score(test_labels, test_accuracy_lr)*100:.2f}%")
+
+### OUTPUT:
+Training time: 4.29 seconds
+Logistic Regression (FFT features) - Test Accuracy: 88.30%
+c:\Users\dinhg\anaconda3\envs\AI\lib\site-packages\sklearn\linear_model\_logistic.py:465: ConvergenceWarning: lbfgs failed to converge (status=1):
+STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT.
+
+Increase the number of iterations (max_iter) or scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression
+  n_iter_i = _check_optimize_result(
+
+
+--- Cell 95: code ---
+
+### CODE:
+start_time = time.time()
+
+lr_classifier = LogisticRegression(penalty='l2', dual=False, tol=0.0001, C=10, fit_intercept=True, intercept_scaling=1, 
+                                   class_weight=None, random_state=42, solver='saga', max_iter=1000, multi_class='deprecated', 
+                                   verbose=0, warm_start=False, n_jobs=None, l1_ratio=None)
+
+lr_classifier.fit(train_features_scaled, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+scale_test_accuracy_lr = lr_classifier.predict(test_features_scaled)
+print(f"Logistic Regression (FFT features) - Test Accuracy: {accuracy_score(test_labels, scale_test_accuracy_lr)*100:.2f}%")
+
+### OUTPUT:
+Training time: 95.42 seconds
+Logistic Regression (FFT features) - Test Accuracy: 88.65%
+c:\Users\dinhg\anaconda3\envs\AI\lib\site-packages\sklearn\linear_model\_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge
+  warnings.warn(
+
+
+--- Cell 96: code ---
+
+### CODE:
+start_time = time.time()
+
+rf_classifier = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, min_samples_split=2, 
+                                       min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features='sqrt', 
+                                       max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, 
+                                       n_jobs=None, random_state=42, verbose=0, warm_start=False, class_weight=None, 
+                                       ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+rf_classifier.fit(train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+test_accuracy_rf = rf_classifier.predict(test_features)
+print(f"Random Forest (FFT features) - Test Accuracy: {accuracy_score(test_labels, test_accuracy_rf)*100:.2f}%")
+
+### OUTPUT:
+Training time: 44.20 seconds
+Random Forest (FFT features) - Test Accuracy: 95.55%
+
+
+--- Cell 97: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+et_classifier.fit(train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(test_features)
+test_accuracy_et = accuracy_score(test_labels, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {test_accuracy_et * 100:.2f}%")
+
+### OUTPUT:
+Training time: 187.79 seconds
+Test Accuracy (Extra Trees): 96.85%
+
+
+--- Cell 98: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='gini', max_depth=30, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=None, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+# Huấn luyện mô hình Extra Trees với dữ liệu đã chuẩn hóa
+et_classifier.fit(train_features_scaled, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(test_features_scaled)
+scale_test_accuracy_et = accuracy_score(test_labels, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {scale_test_accuracy_et * 100:.2f}%")
+
+
+
+### OUTPUT:
+Training time: 186.33 seconds
+Test Accuracy (Extra Trees): 96.85%
+
+
+--- Cell 99: markdown ---
+
+### MARKDOWN/RAW:
+# PCA
+
+--- Cell 100: code ---
+
+### CODE:
+def separate_fft_cqt_features(combined_features, nfft=512, n_bins=96):
+    """
+    Tách đặc trưng kết hợp thành đặc trưng FFT và CQT riêng biệt.
+    
+    Args:
+        combined_features: Mảng đặc trưng kết hợp FFT và CQT
+        nfft: Số điểm FFT đã sử dụng khi tạo đặc trưng
+        n_bins: Số lượng bin CQT đã sử dụng khi tạo đặc trưng
+        
+    Returns:
+        fft_features: Mảng đặc trưng FFT
+        cqt_features: Mảng đặc trưng CQT
+    """
+    fft_length = nfft // 2 + 1
+    
+    # Kiểm tra shape của mảng đầu vào
+    if combined_features.ndim == 1:
+        # Nếu là vector đơn, tách trực tiếp
+        fft_features = combined_features[:fft_length]
+        cqt_features = combined_features[fft_length:]
+    else:
+        # Nếu là batch, tách từng mẫu
+        fft_features = combined_features[:, :fft_length]
+        cqt_features = combined_features[:, fft_length:]
+    
+    return fft_features, cqt_features
+
+train_fft, train_cqt = separate_fft_cqt_features(train_features, nfft=512, n_bins=96)
+test_fft, test_cqt = separate_fft_cqt_features(test_features, nfft=512, n_bins=96)
+
+print(f"Train combined features shape: {train_features.shape}")
+print(f"Train FFT features shape: {train_fft.shape}")
+print(f"Train CQT features shape: {train_cqt.shape}")
+
+### OUTPUT:
+Train combined features shape: (16076, 353)
+Train FFT features shape: (16076, 257)
+Train CQT features shape: (16076, 96)
+
+
+--- Cell 101: code ---
+
+### CODE:
+import matplotlib.pyplot as plt
+
+def apply_pca_to_fft(fft_features, test_features=None, n_components=100, plot=True):
+    """
+    Áp dụng PCA để giảm số chiều của đặc trưng FFT.
+    
+    Args:
+        fft_features: Mảng đặc trưng FFT cho tập huấn luyện
+        test_features: Mảng đặc trưng FFT cho tập kiểm tra (nếu có)
+        n_components: Số lượng thành phần chính muốn giữ lại
+        plot: Vẽ đồ thị tỷ lệ phương sai giải thích được
+        
+    Returns:
+        fft_pca: Đặc trưng FFT sau khi áp dụng PCA cho tập huấn luyện
+        test_pca: Đặc trưng FFT sau khi áp dụng PCA cho tập kiểm tra (nếu có)
+        pca: Đối tượng PCA đã được huấn luyện
+    """
+    from sklearn.decomposition import PCA
+    
+    # Khởi tạo và huấn luyện PCA
+    pca = PCA(n_components=n_components, random_state=53940)
+    fft_pca = pca.fit_transform(fft_features)
+    
+    # Áp dụng cho tập kiểm tra (nếu có)
+    test_pca = None
+    if test_features is not None:
+        test_pca = pca.transform(test_features)
+    
+    # Vẽ đồ thị tỷ lệ phương sai giải thích được
+    if plot:
+        explained_variance_ratio = pca.explained_variance_ratio_
+        cumulative_variance_ratio = np.cumsum(explained_variance_ratio)
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(cumulative_variance_ratio, marker='o')
+        plt.axhline(y=0.95, color='r', linestyle='-')
+        plt.grid(True)
+        plt.title('Cumulative Explained Variance Ratio')
+        plt.xlabel('Number of Components')
+        plt.ylabel('Explained Variance Ratio')
+        plt.show()
+        
+        # Tìm số lượng thành phần cần thiết để giải thích 95% phương sai
+        n_components_95 = np.where(cumulative_variance_ratio >= 0.95)[0][0] + 1
+        print(f"Number of components needed to explain 95% variance: {n_components_95}")
+        
+        # Hiển thị top 5 thành phần chính quan trọng nhất
+        print(f"Top 5 principal components explain: {np.sum(explained_variance_ratio[:5]):.4f} of variance")
+    
+    return fft_pca, test_pca, pca
+
+train_fft_pca, test_fft_pca, fft_pca = apply_pca_to_fft(
+    train_fft, test_features=test_fft, n_components=130
+)
+
+print(f"Original FFT features shape: {train_fft.shape}")
+print(f"PCA FFT features shape: {train_fft_pca.shape}")
+
+### OUTPUT:
+<Figure size 1000x600 with 1 Axes>Number of components needed to explain 95% variance: 3
+Top 5 principal components explain: 0.9740 of variance
+Original FFT features shape: (16076, 257)
+PCA FFT features shape: (16076, 130)
+
+
+--- Cell 102: code ---
+
+### CODE:
+def apply_pca_to_cqt(cqt_features, test_features=None, n_components=100, plot=True):
+    """
+    Áp dụng PCA để giảm số chiều của đặc trưng CQT.
+    
+    Args:
+        cqt_features: Mảng đặc trưng CQT cho tập huấn luyện
+        test_features: Mảng đặc trưng CQT cho tập kiểm tra (nếu có)
+        n_components: Số lượng thành phần chính muốn giữ lại
+        plot: Vẽ đồ thị tỷ lệ phương sai giải thích được
+        
+    Returns:
+        cqt_pca: Đặc trưng CQT sau khi áp dụng PCA cho tập huấn luyện
+        test_pca: Đặc trưng CQT sau khi áp dụng PCA cho tập kiểm tra (nếu có)
+        pca: Đối tượng PCA đã được huấn luyện
+    """
+    from sklearn.decomposition import PCA
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    # Khởi tạo và huấn luyện PCA
+    pca = PCA(n_components=n_components, random_state=53940)
+    cqt_pca = pca.fit_transform(cqt_features)
+    
+    # Áp dụng cho tập kiểm tra (nếu có)
+    test_pca = None
+    if test_features is not None:
+        test_pca = pca.transform(test_features)
+    
+    # Vẽ đồ thị tỷ lệ phương sai giải thích được
+    if plot:
+        explained_variance_ratio = pca.explained_variance_ratio_
+        cumulative_variance_ratio = np.cumsum(explained_variance_ratio)
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(cumulative_variance_ratio, marker='o')
+        plt.axhline(y=0.95, color='r', linestyle='-')
+        plt.grid(True)
+        plt.title('Cumulative Explained Variance Ratio (CQT)')
+        plt.xlabel('Number of Components')
+        plt.ylabel('Explained Variance Ratio')
+        plt.show()
+        
+        # Tìm số lượng thành phần cần thiết để giải thích 95% phương sai
+        n_components_95 = np.where(cumulative_variance_ratio >= 0.95)[0][0] + 1
+        print(f"Number of components needed to explain 95% variance (CQT): {n_components_95}")
+        
+        # Hiển thị top 5 thành phần chính quan trọng nhất
+        print(f"Top 5 principal components explain: {np.sum(explained_variance_ratio[:5]):.4f} of variance (CQT)")
+    
+    return cqt_pca, test_pca, pca
+
+# Áp dụng PCA cho CQT features
+train_cqt_pca, test_cqt_pca, cqt_pca = apply_pca_to_cqt(
+    train_cqt, test_features=test_cqt, n_components=80 
+)
+
+print(f"Original CQT features shape: {train_cqt.shape}")
+print(f"PCA CQT features shape: {train_cqt_pca.shape}")
+
+### OUTPUT:
+<Figure size 1000x600 with 1 Axes>Number of components needed to explain 95% variance (CQT): 12
+Top 5 principal components explain: 0.9002 of variance (CQT)
+Original CQT features shape: (16076, 96)
+PCA CQT features shape: (16076, 80)
+
+
+--- Cell 103: code ---
+
+### CODE:
+train_features = np.hstack((train_fft_pca, train_cqt_pca))
+test_features = np.hstack((test_fft_pca, test_cqt_pca))
+
+print(f"Combined features shape: {train_features.shape}")
+print(f"Test combined features shape: {test_features.shape}")
+
+### OUTPUT:
+Combined features shape: (16076, 210)
+Test combined features shape: (4000, 210)
+
+
+--- Cell 104: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=100, kernel='rbf', degree=3, gamma=0.1, coef0=0.0, shrinking=True, 
+                         probability=False, tol=0.001, cache_size=500, class_weight=None, verbose=False, 
+                         max_iter=-1, decision_function_shape='ovr', break_ties=False, random_state=42)
+
+
+# Huấn luyện mô hình SVM trên dữ liệu kết hợp
+svm_rbf_classifier.fit(train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(test_features)
+test_accuracy_svm = accuracy_score(test_labels, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {test_accuracy_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 19.04 seconds
+Test Accuracy (SVM with RBF Kernel): 98.62%
+
+
+--- Cell 105: code ---
+
+### CODE:
+train_features.shape
+
+### OUTPUT:
+(16076, 210)
+
+--- Cell 106: code ---
+
+### CODE:
+import numpy as np
+import librosa
+
+def compute_stft_features(signal_in, sample_rate, n_fft=2048, hop_length=512, apply_log=True):
+    """
+    Tính đặc trưng STFT của tín hiệu:
+      - Tính STFT bằng librosa.stft và lấy giá trị magnitude.
+      - (Tùy chọn) Áp dụng log scaling.
+      - Trung bình theo trục thời gian (axis=1) để thu được vector đặc trưng có kích thước (n_fft/2+1,).
+    """
+    stft_matrix = np.abs(librosa.stft(signal_in, n_fft=n_fft, hop_length=hop_length))
+    if apply_log:
+        stft_matrix = np.log(stft_matrix + 1e-8)  # Thêm epsilon để tránh log(0)
+    # Trung bình theo trục thời gian (tính trung bình các cột)
+    features = np.mean(stft_matrix, axis=1)
+    return features
+
+--- Cell 107: code ---
+
+### CODE:
+def load_stft_features_from_directory(directory, sample_rate=22050, n_fft=2048, hop_length=512, output_dir=None, dataset_type='train'):
+    """
+    Load and compute stft features from audio files in a directory, with improved accuracy.
+    Assumes 'Queen' and 'NonQueen' subdirectories are present.
+    """
+    # Kiểm tra nếu file đã tồn tại, thì load lại
+    features_file = os.path.join(output_dir, f'stft2_features_{dataset_type}.pkl')
+    labels_file = os.path.join(output_dir, f'stft2_labels_{dataset_type}.pkl')
+    
+    if os.path.exists(features_file) and os.path.exists(labels_file):
+        print(f"Loading {dataset_type} data from .pkl files...")
+        features = joblib.load(features_file)
+        labels = joblib.load(labels_file)
+    else:
+        print(f"Extracting {dataset_type} data...")
+        start_time = time.time()
+        labels = []
+        features = []
+
+        for label in ['Queen', 'NonQueen']:
+            path = os.path.join(directory, label)
+            for file in os.listdir(path):
+                file_path = os.path.join(path, file)
+                # Load audio file
+                signal, sr = librosa.load(file_path, sr=sample_rate)
+
+                # Compute stft features
+                stft_feature = compute_stft_features(signal, sr, n_fft=n_fft, hop_length=hop_length, apply_log=True)
+
+                features.append(stft_feature)
+                labels.append(label)
+
+        features = np.array(features)
+        labels = np.array(labels)
+
+        # Lưu dữ liệu vào file .pkl nếu chưa tồn tại
+        if output_dir:
+            joblib.dump(features, features_file)
+            joblib.dump(labels, labels_file)
+
+        end_time = time.time()
+        print(f"stft extraction time: {end_time - start_time:.2f} seconds")
+    
+    return features, labels
+
+stft_train_features, stft_train_labels = load_stft_features_from_directory(train_path, sample_rate=22050, n_fft=4096, hop_length=1024, output_dir=output_dir, dataset_type='train')
+stft_val_features, stft_val_labels = load_stft_features_from_directory(val_path, sample_rate=22050, n_fft=4096, hop_length=1024, output_dir=output_dir, dataset_type='val')
+stft_test_features, stft_test_labels = load_stft_features_from_directory(test_path, sample_rate=22050, n_fft=4096, hop_length=1024, output_dir=output_dir, dataset_type='test')
+
+stft_train_features = np.vstack((stft_train_features, stft_val_features))
+stft_train_labels = np.hstack((stft_train_labels, stft_val_labels))
+
+### OUTPUT:
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+
+
+--- Cell 108: code ---
+
+### CODE:
+stft_train_features.shape
+
+### OUTPUT:
+(16076, 2049)
+
+--- Cell 109: code ---
+
+### CODE:
+def apply_pca_to_stft(stft_features, test_features=None, n_components=100, plot=True):
+    from sklearn.decomposition import PCA
+    
+    # Khởi tạo và huấn luyện PCA
+    pca = PCA(n_components=n_components, random_state=3951)
+    fft_pca = pca.fit_transform(stft_features)
+    
+    # Áp dụng cho tập kiểm tra (nếu có)
+    test_pca = None
+    if test_features is not None:
+        test_pca = pca.transform(test_features)
+    
+    # Vẽ đồ thị tỷ lệ phương sai giải thích được
+    if plot:
+        explained_variance_ratio = pca.explained_variance_ratio_
+        cumulative_variance_ratio = np.cumsum(explained_variance_ratio)
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(cumulative_variance_ratio, marker='o')
+        plt.axhline(y=0.95, color='r', linestyle='-')
+        plt.grid(True)
+        plt.title('Cumulative Explained Variance Ratio')
+        plt.xlabel('Number of Components')
+        plt.ylabel('Explained Variance Ratio')
+        plt.show()
+        
+        # Tìm số lượng thành phần cần thiết để giải thích 95% phương sai
+        n_components_95 = np.where(cumulative_variance_ratio >= 0.95)[0][0] + 1
+        print(f"Number of components needed to explain 95% variance: {n_components_95}")
+        
+        # Hiển thị top 5 thành phần chính quan trọng nhất
+        print(f"Top 5 principal components explain: {np.sum(explained_variance_ratio[:5]):.4f} of variance")
+    
+    return fft_pca, test_pca, pca
+
+train_stft_pca, test_stft_pca, stft_pca = apply_pca_to_stft(
+    stft_train_features, test_features=stft_test_features, n_components=80
+)
+
+print(f"Original STFT features shape: {stft_train_features.shape}")
+print(f"PCA STFT features shape: {train_stft_pca.shape}")
+
+### OUTPUT:
+<Figure size 3000x1800 with 1 Axes>Number of components needed to explain 95% variance: 16
+Top 5 principal components explain: 0.9265 of variance
+Original STFT features shape: (16076, 2049)
+PCA STFT features shape: (16076, 80)
+
+
+--- Cell 110: code ---
+
+### CODE:
+combined_train_features = np.hstack((train_features, train_stft_pca))
+combined_test_features = np.hstack((test_features, test_stft_pca))
+
+--- Cell 111: code ---
+
+### CODE:
+combined_train_features.shape
+
+### OUTPUT:
+(16076, 290)
+
+--- Cell 112: code ---
+
+### CODE:
+start_time = time.time()
+
+svm_rbf_classifier = SVC(C=10, kernel='rbf', degree=3, gamma=0.0075, 
+                         coef0=0.0, shrinking=True, probability=False, tol=0.001, 
+                         cache_size=500, class_weight=None, verbose=False, max_iter=-1, 
+                         decision_function_shape='ovr', break_ties=False, random_state=42)
+
+
+# Huấn luyện mô hình SVM trên dữ liệu kết hợp
+svm_rbf_classifier.fit(combined_train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_svm_rbf = svm_rbf_classifier.predict(combined_test_features)
+test_accuracy_svm = accuracy_score(test_labels, test_predictions_svm_rbf)
+print(f"Test Accuracy (SVM with RBF Kernel): {test_accuracy_svm * 100:.2f}%")
+
+### OUTPUT:
+Training time: 12.30 seconds
+Test Accuracy (SVM with RBF Kernel): 99.38%
+
+
+--- Cell 113: code ---
+
+### CODE:
+import numpy as np
+import time
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+
+# Huấn luyện mô hình Random Forest
+start_time = time.time()
+
+rf_classifier = RandomForestClassifier(n_estimators=100, criterion='gini', max_depth=None, min_samples_split=2, 
+                                       min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features='sqrt', 
+                                       max_leaf_nodes=None, min_impurity_decrease=0.0, bootstrap=True, oob_score=False, 
+                                       n_jobs=-1, random_state=42, verbose=0, warm_start=False, class_weight=None, 
+                                       ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+rf_classifier.fit(combined_train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình
+test_predictions_rf = rf_classifier.predict(combined_test_features)
+test_accuracy_rf = accuracy_score(test_labels, test_predictions_rf)
+print(f"Random Forest - Test Accuracy: {test_accuracy_rf * 100:.2f}%")
+
+# Lấy độ quan trọng của đặc trưng
+feature_importances = rf_classifier.feature_importances_
+
+# Sắp xếp các đặc trưng theo độ quan trọng
+sorted_indices = np.argsort(feature_importances)[::-1]
+
+# Chọn số lượng đặc trưng quan trọng nhất (ví dụ: chọn top 20)
+num_features = 82
+selected_features_indices = sorted_indices[:num_features]
+
+# Lọc lại dữ liệu với các đặc trưng đã chọn
+rf_selected_train_features = combined_train_features[:, selected_features_indices]
+rf_selected_test_features = combined_test_features[:, selected_features_indices]
+
+# Huấn luyện lại mô hình với tập dữ liệu đã chọn lọc
+rf_classifier.fit(rf_selected_train_features, train_labels)
+rf_test_predictions_selected = rf_classifier.predict(rf_selected_test_features)
+rf_selected_test_accuracy = accuracy_score(test_labels, rf_test_predictions_selected)
+print(f"Test Accuracy with Selected Features: {rf_selected_test_accuracy * 100:.2f}%")
+
+### OUTPUT:
+Training time: 2.14 seconds
+Random Forest - Test Accuracy: 97.50%
+Test Accuracy with Selected Features: 98.12%
+
+
+--- Cell 114: code ---
+
+### CODE:
+start_time = time.time()
+
+et_classifier = ExtraTreesClassifier(n_estimators=200, criterion='log_loss', max_depth=None, min_samples_split=2, min_samples_leaf=1, 
+                                     min_weight_fraction_leaf=0.0, max_features=None, max_leaf_nodes=None, min_impurity_decrease=0.0,
+                                     bootstrap=False, oob_score=False, n_jobs=-1, random_state=42, verbose=0, warm_start=False, 
+                                     class_weight=None, ccp_alpha=0.0, max_samples=None, monotonic_cst=None)
+
+# Huấn luyện mô hình Extra Trees với dữ liệu đã chuẩn hóa
+et_classifier.fit(combined_train_features, train_labels)
+
+end_time = time.time()
+print(f"Training time: {end_time - start_time:.2f} seconds")
+
+# Đánh giá mô hình trên bộ testing
+test_predictions_et = et_classifier.predict(combined_test_features)
+scale_test_accuracy_et = accuracy_score(test_labels, test_predictions_et)
+print(f"Test Accuracy (Extra Trees): {scale_test_accuracy_et * 100:.2f}%")
+
+
+
+### OUTPUT:
+Training time: 6.38 seconds
+Test Accuracy (Extra Trees): 98.25%
+
+
+--- Cell 115: markdown ---
+
+### MARKDOWN/RAW:
+# PCA (FFTs + CQTs + STFT)
+
+--- Cell 116: code ---
+
+### CODE:
+# ============================================================================
+# KẾT HỢP FFTs + CQTs + STFT VÀ TRAIN SVM VỚI THAM SỐ TỐI ƯU
+# ============================================================================
+
+import numpy as np
+from sklearn.decomposition import PCA
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score
+import time
+
+# 1. LOAD FFTs FEATURES
+print("=" * 60)
+print("Loading FFTs features...")
+train_features_fft, train_labels_fft = load_fft_features_from_directory(
+    train_path, sample_rate=22050, NFFT=512, 
+    output_dir=output_dir, dataset_type='train'
+)
+val_features_fft, val_labels_fft = load_fft_features_from_directory(
+    val_path, sample_rate=22050, NFFT=512, 
+    output_dir=output_dir, dataset_type='val'
+)
+test_features_fft, test_labels_fft = load_fft_features_from_directory(
+    test_path, sample_rate=22050, NFFT=512, 
+    output_dir=output_dir, dataset_type='test'
+)
+
+train_features_fft = np.vstack((train_features_fft, val_features_fft))
+train_labels_fft = np.hstack((train_labels_fft, val_labels_fft))
+print(f"FFTs - Train shape: {train_features_fft.shape}, Test shape: {test_features_fft.shape}")
+
+# 2. LOAD CQTs FEATURES
+print("=" * 60)
+print("Loading CQTs features...")
+cqts_train_features, cqts_train_labels = load_cqts_features_from_directory(
+    train_path, sample_rate=22050, frame_size=0.025, frame_stride=0.01, 
+    fmin=None, n_bins=84, bins_per_octave=12, 
+    output_dir=output_dir, dataset_type='train'
+)
+cqts_val_features, cqts_val_labels = load_cqts_features_from_directory(
+    val_path, sample_rate=22050, frame_size=0.025, frame_stride=0.01, 
+    fmin=None, n_bins=84, bins_per_octave=12, 
+    output_dir=output_dir, dataset_type='val'
+)
+cqts_test_features, cqts_test_labels = load_cqts_features_from_directory(
+    test_path, sample_rate=22050, frame_size=0.025, frame_stride=0.01, 
+    fmin=None, n_bins=84, bins_per_octave=12, 
+    output_dir=output_dir, dataset_type='test'
+)
+
+cqts_train_features = np.vstack((cqts_train_features, cqts_val_features))
+cqts_train_labels = np.hstack((cqts_train_labels, cqts_val_labels))
+print(f"CQTs - Train shape: {cqts_train_features.shape}, Test shape: {cqts_test_features.shape}")
+
+# 3. LOAD STFT FEATURES
+print("=" * 60)
+print("Loading STFT features...")
+stft_train_features, stft_train_labels = load_stft_features_from_directory(
+    train_path, sample_rate=22050, n_fft=4096, hop_length=1024, 
+    output_dir=output_dir, dataset_type='train'
+)
+stft_val_features, stft_val_labels = load_stft_features_from_directory(
+    val_path, sample_rate=22050, n_fft=4096, hop_length=1024, 
+    output_dir=output_dir, dataset_type='val'
+)
+stft_test_features, stft_test_labels = load_stft_features_from_directory(
+    test_path, sample_rate=22050, n_fft=4096, hop_length=1024, 
+    output_dir=output_dir, dataset_type='test'
+)
+
+stft_train_features = np.vstack((stft_train_features, stft_val_features))
+stft_train_labels = np.hstack((stft_train_labels, stft_val_labels))
+print(f"STFT - Train shape: {stft_train_features.shape}, Test shape: {stft_test_features.shape}")
+
+# 4. ÁP DỤNG PCA CHO MỖI LOẠI FEATURES
+print("=" * 60)
+print("Applying PCA...")
+
+def apply_pca_to_features(train_features, test_features, n_components=100, plot=False):
+    """Áp dụng PCA để giảm số chiều của features."""
+    from sklearn.decomposition import PCA
+    import matplotlib.pyplot as plt
+    
+    pca = PCA(n_components=n_components)
+    train_pca = pca.fit_transform(train_features)
+    
+    if test_features is not None:
+        test_pca = pca.transform(test_features)
+    else:
+        test_pca = None
+    
+    # Hiển thị thông tin về PCA nếu cần
+    if plot:
+        explained_variance_ratio = pca.explained_variance_ratio_
+        cumulative_variance_ratio = np.cumsum(explained_variance_ratio)
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(cumulative_variance_ratio, marker='o')
+        plt.axhline(y=0.95, color='r', linestyle='-')
+        plt.grid(True)
+        plt.title('Cumulative Explained Variance Ratio')
+        plt.xlabel('Number of Components')
+        plt.ylabel('Explained Variance Ratio')
+        plt.show()
+        
+        n_components_95 = np.where(cumulative_variance_ratio >= 0.95)[0][0] + 1
+        print(f"Number of components needed to explain 95% variance: {n_components_95}")
+    
+    return train_pca, test_pca, pca
+
+# PCA cho FFTs: 130 components (giống như FFT ban đầu cho 99.38%)
+train_ffts_pca, test_ffts_pca, fft_pca = apply_pca_to_features(
+    train_features_fft, test_features_fft, n_components=130, plot=False
+)
+print(f"FFTs PCA - Train shape: {train_ffts_pca.shape}, Test shape: {test_ffts_pca.shape}")
+
+# PCA cho CQTs: 80 components (giống như CQT ban đầu)
+train_cqts_pca, test_cqts_pca, cqts_pca = apply_pca_to_features(
+    cqts_train_features, cqts_test_features, n_components=80, plot=False
+)
+print(f"CQTs PCA - Train shape: {train_cqts_pca.shape}, Test shape: {test_cqts_pca.shape}")
+
+# PCA cho STFT: 80 components (giống như STFT ban đầu)
+train_stft_pca, test_stft_pca, stft_pca = apply_pca_to_features(
+    stft_train_features, stft_test_features, n_components=80, plot=False
+)
+print(f"STFT PCA - Train shape: {train_stft_pca.shape}, Test shape: {test_stft_pca.shape}")
+
+# 5. KẾT HỢP TẤT CẢ FEATURES
+print("=" * 60)
+print("Combining features...")
+
+# Kết hợp FFTs + CQTs
+train_features_combined = np.hstack((train_ffts_pca, train_cqts_pca))
+test_features_combined = np.hstack((test_ffts_pca, test_cqts_pca))
+
+# Kết hợp thêm STFT
+combined_train_features = np.hstack((train_features_combined, train_stft_pca))
+combined_test_features = np.hstack((test_features_combined, test_stft_pca))
+
+print(f"Combined features - Train shape: {combined_train_features.shape}")
+print(f"Combined features - Test shape: {combined_test_features.shape}")
+
+# 6. TRAIN VỚI CÁC MÔ HÌNH: KNN, SVM (RBF), RF, ET
+print("=" * 60)
+print("Training and evaluating multiple models...")
+
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
+
+models = {
+    "SVM_RBF": SVC(
+        C=10,
+        kernel='rbf',
+        degree=3,
+        gamma=0.0075,  # Tham số tối ưu trước đó
+        coef0=0.0,
+        shrinking=True,
+        probability=False,
+        tol=0.001,
+        cache_size=500,
+        class_weight=None,
+        verbose=False,
+        max_iter=-1,
+        decision_function_shape='ovr',
+        break_ties=False,
+        random_state=42
+    ),
+    "KNN": KNeighborsClassifier(
+        n_neighbors=7,
+        weights='distance',
+        metric='minkowski',
+        p=2  # Euclidean
+    ),
+    "RF": RandomForestClassifier(
+        n_estimators=400,
+        max_depth=None,
+        n_jobs=-1,
+        random_state=42
+    ),
+    "ET": ExtraTreesClassifier(
+        n_estimators=600,
+        max_depth=None,
+        n_jobs=-1,
+        random_state=42
+    ),
+}
+
+results = {}
+timings = {}
+
+for name, clf in models.items():
+    print("-" * 60)
+    print(f"Training {name}...")
+    start_time = time.time()
+    clf.fit(combined_train_features, train_labels_fft)
+    train_time = time.time() - start_time
+
+    print(f"Evaluating {name}...")
+    y_pred = clf.predict(combined_test_features)
+    acc = accuracy_score(test_labels_fft, y_pred)
+
+    results[name] = acc
+    timings[name] = train_time
+
+    print(f"{name} - Test Accuracy: {acc * 100:.2f}% | Training time: {train_time:.2f}s")
+
+print("=" * 60)
+print("Leaderboard (sorted by accuracy):")
+for name, acc in sorted(results.items(), key=lambda x: x[1], reverse=True):
+    print(f"{name}: {acc * 100:.2f}% (train {timings[name]:.2f}s)")
+print("=" * 60)
+
+### OUTPUT:
+============================================================
+Loading FFTs features...
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+FFTs - Train shape: (16076, 257), Test shape: (4000, 257)
+============================================================
+Loading CQTs features...
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+CQTs - Train shape: (16076, 84), Test shape: (4000, 84)
+============================================================
+Loading STFT features...
+Loading train data from .pkl files...
+Loading val data from .pkl files...
+Loading test data from .pkl files...
+STFT - Train shape: (16076, 2049), Test shape: (4000, 2049)
+============================================================
+Applying PCA...
+FFTs PCA - Train shape: (16076, 130), Test shape: (4000, 130)
+CQTs PCA - Train shape: (16076, 80), Test shape: (4000, 80)
+STFT PCA - Train shape: (16076, 80), Test shape: (4000, 80)
+============================================================
+Combining features...
+Combined features - Train shape: (16076, 290)
+Combined features - Test shape: (4000, 290)
+============================================================
+Training and evaluating multiple models...
+------------------------------------------------------------
+Training SVM_RBF...
+Evaluating SVM_RBF...
+SVM_RBF - Test Accuracy: 98.78% | Training time: 3.97s
+------------------------------------------------------------
+Training KNN...
+Evaluating KNN...
+KNN - Test Accuracy: 96.97% | Training time: 0.01s
+------------------------------------------------------------
+Training RF...
+Evaluating RF...
+RF - Test Accuracy: 96.00% | Training time: 10.17s
+------------------------------------------------------------
+Training ET...
+Evaluating ET...
+ET - Test Accuracy: 96.03% | Training time: 3.29s
+============================================================
+Leaderboard (sorted by accuracy):
+SVM_RBF: 98.78% (train 3.97s)
+KNN: 96.97% (train 0.01s)
+ET: 96.03% (train 3.29s)
+RF: 96.00% (train 10.17s)
+============================================================
+
+
